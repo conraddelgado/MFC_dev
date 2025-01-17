@@ -24,7 +24,8 @@ module m_ibm
                s_compute_interpolation_coeffs, &
                s_interpolate_image_point, &
                s_find_ghost_points, &
-               s_find_num_ghost_points
+               s_find_num_ghost_points, &
+               s_find_num_sphere_markers
     ; public :: s_initialize_ibm_module, &
  s_ibm_setup, &
  s_ibm_correct_state, &
@@ -43,6 +44,12 @@ module m_ibm
     integer :: num_gps !< Number of ghost points
     integer :: num_inner_gps !< Number of ghost points
     !$acc declare create(gp_layers, num_gps, num_inner_gps)
+
+    ! variables for drag calculation
+    integer, dimension(:), allocatable :: num_sphere_markers
+    integer, dimension(:, :, :), allocatable :: sphere_markers_loc 
+
+    !$acc declare create(num_sphere_markers, sphere_markers_loc)
 
 contains
 
@@ -72,6 +79,8 @@ contains
         ! @:ALLOCATE(ib_markers%sf(0:m, 0:n, 0:p))
 
         !$acc enter data copyin(gp_layers, num_gps, num_inner_gps)
+
+        @:ALLOCATE(num_sphere_markers(num_ibs))
 
     end subroutine s_initialize_ibm_module
 
@@ -104,6 +113,15 @@ contains
 
         call s_compute_interpolation_coeffs(ghost_points)
         !$acc update device(ghost_points)
+
+        ! setup for drag calculation
+        call s_find_num_sphere_markers()
+        !$acc update device(num_sphere_markers)
+        !do i = 1, num_ibs
+        !    @:ALLOCATE(sphere_markers_loc(num_ibs, num_sphere_markers, 3))
+        !end do
+        !$acc enter data copyin(sphere_markers_loc) 
+
 
     end subroutine s_ibm_setup
 
@@ -566,6 +584,30 @@ contains
 
     end subroutine s_find_ghost_points
 
+    ! find the number of ib markers on each ib
+    subroutine s_find_num_sphere_markers()
+    integer :: i, j, k, i_ibs
+
+        do i_ibs = 1, num_ibs
+            num_sphere_markers(num_ibs) = 0 ! initialize to zero for each ib
+
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p 
+                        if (abs(levelset%sf(i, j, k, i_ibs)) < sqrt( (dx(i)/2._wp)**2 + (dy(j)/2._wp)**2 + (dz(k)/2._wp)**2 )) then 
+                            num_sphere_markers(i_ibs) = num_sphere_markers(i_ibs) + 1
+
+                        end if
+                    end do 
+                end do
+            end do
+        end do
+
+
+
+    end subroutine s_find_num_sphere_markers
+
+
     !>  Function that computes the interpolation coefficients of image points
     subroutine s_compute_interpolation_coeffs(ghost_points)
 
@@ -839,6 +881,9 @@ contains
         @:DEALLOCATE(ib_markers%sf)
         @:DEALLOCATE(levelset%sf)
         @:DEALLOCATE(levelset_norm%sf)
+
+        @:DEALLOCATE(num_sphere_markers)
+        !@:DEALLOCATE(sphere_markers_loc)
 
     end subroutine s_finalize_ibm_module
 

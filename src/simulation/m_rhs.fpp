@@ -601,7 +601,7 @@ contains
 
     end subroutine s_initialize_rhs_module
 
-    subroutine s_compute_rhs(q_cons_vf, q_T_sf, q_prim_vf, rhs_vf, pb, rhs_pb, mv, rhs_mv, t_step, time_avg)
+    subroutine s_compute_rhs(q_cons_vf, q_T_sf, q_prim_vf, rhs_vf, pb, rhs_pb, mv, rhs_mv, t_step, time_avg, rhs_rhouu, du_dxyz)
 
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(scalar_field), intent(inout) :: q_T_sf
@@ -615,6 +615,10 @@ contains
         real(wp), dimension(0:m, 0:n, 0:p) :: nbub
         real(wp) :: t_start, t_finish
         integer :: i, j, k, l, id !< Generic loop iterators
+
+        ! variables for drag calculation
+        type(scalar_field), dimension(sys_size), intent(inout) :: rhs_rhouu
+        type(vector_field), dimension(1:3), intent(inout) :: du_dxyz
 
         call nvtxStartRange("COMPUTE-RHS")
 
@@ -690,6 +694,13 @@ contains
                                idwbuff(1), idwbuff(2), idwbuff(3))
             call nvtxEndRange
         end if
+
+        ! drag calculation spatial velocity derivatives
+        do i = 1, 3
+                du_dxyz(i)%vf(1)%sf(:, :, :) = dq_prim_dx_qp(1)%vf(i+1)%sf(:, :, :)
+                du_dxyz(i)%vf(2)%sf(:, :, :) = dq_prim_dy_qp(1)%vf(i+1)%sf(:, :, :)
+                du_dxyz(i)%vf(3)%sf(:, :, :) = dq_prim_dz_qp(1)%vf(i+1)%sf(:, :, :)
+        end do
 
         if (surface_tension) then
             call nvtxStartRange("RHS-SURFACE-TENSION")
@@ -800,7 +811,9 @@ contains
                                                  rhs_vf, &
                                                  q_cons_qp, &
                                                  q_prim_qp, &
-                                                 flux_src_n(id))
+                                                 flux_src_n(id), & 
+                                                 rhs_rhouu, & 
+                                                 q_prim_vf)
             call nvtxEndRange
 
             ! RHS additions for hypoelasticity
@@ -920,7 +933,7 @@ contains
 
     end subroutine s_compute_rhs
 
-    subroutine s_compute_advection_source_term(idir, rhs_vf, q_cons_vf, q_prim_vf, flux_src_n_vf)
+    subroutine s_compute_advection_source_term(idir, rhs_vf, q_cons_vf, q_prim_vf, flux_src_n_vf, rhs_rhouu, q_prim_calc)
 
         integer, intent(in) :: idir
         type(scalar_field), dimension(sys_size), intent(inout) :: rhs_vf
@@ -929,6 +942,10 @@ contains
         type(vector_field), intent(inout) :: flux_src_n_vf
 
         integer :: i, j, k, l, q
+
+        ! variables for drag calculation
+        type(scalar_field), dimension(sys_size), intent(inout) :: rhs_rhouu
+        type(scalar_field), dimension(sys_size), intent(in) :: q_prim_calc
 
         if (alt_soundspeed) then
             !$acc parallel loop collapse(3) gang vector default(present)
@@ -976,6 +993,20 @@ contains
                                                      - flux_n(1)%vf(j)%sf(k, l, q))
                         end do
                     end do
+                end do
+            end do
+
+            ! drag calculation loop, x-dir
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        rhs_rhouu(2)%sf(i, j, k) = 1._wp/dx(i) * &
+                                                   (flux_n(1)%vf(2)%sf(i - 1, j, k) &
+                                                    - q_prim_calc(1)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k) &
+                                                    - (flux_n(1)%vf(2)%sf(i, j, k) & 
+                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                    end do 
                 end do
             end do
 
@@ -1086,6 +1117,20 @@ contains
                                  - flux_n(2)%vf(j)%sf(q, k, l))
                         end do
                     end do
+                end do
+            end do
+
+            ! drag calculation loop, y-dir
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dy(j) * &
+                                                   (flux_n(2)%vf(2)%sf(i, j - 1, k) &
+                                                    - q_prim_calc(1)%sf(i , j - 1, k)*q_prim_calc(3)%sf(i , j - 1, k)*q_prim_calc(2)%sf(i , j - 1, k) &
+                                                    - (flux_n(2)%vf(2)%sf(i, j, k) & 
+                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(3)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                    end do 
                 end do
             end do
 
@@ -1294,6 +1339,20 @@ contains
                     end do
                 end do
             end if
+
+            ! drag calculation loop, z-dir
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dz(k) * &
+                                                   (flux_n(3)%vf(2)%sf(i, j, k - 1) &
+                                                    - q_prim_calc(1)%sf(i , j, k - 1)*q_prim_calc(4)%sf(i , j, k - 1)*q_prim_calc(2)%sf(i , j, k - 1) &
+                                                    - (flux_n(3)%vf(2)%sf(i, j, k) & 
+                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(4)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                    end do 
+                end do
+            end do
 
             if (model_eqns == 3) then
                 !$acc parallel loop collapse(4) gang vector default(present)
