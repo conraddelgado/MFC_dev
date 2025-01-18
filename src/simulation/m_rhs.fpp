@@ -697,9 +697,9 @@ contains
 
         ! drag calculation spatial velocity derivatives
         do i = 1, 3
-                du_dxyz(i)%vf(1)%sf(:, :, :) = dq_prim_dx_qp(1)%vf(i+1)%sf(:, :, :)
-                du_dxyz(i)%vf(2)%sf(:, :, :) = dq_prim_dy_qp(1)%vf(i+1)%sf(:, :, :)
-                du_dxyz(i)%vf(3)%sf(:, :, :) = dq_prim_dz_qp(1)%vf(i+1)%sf(:, :, :)
+                du_dxyz(i)%vf(1)%sf(:, :, :) = dq_prim_dx_qp(1)%vf(i+1)%sf(:, :, :) ! dudx
+                du_dxyz(i)%vf(2)%sf(:, :, :) = dq_prim_dy_qp(1)%vf(i+1)%sf(:, :, :) ! dudy
+                du_dxyz(i)%vf(3)%sf(:, :, :) = dq_prim_dz_qp(1)%vf(i+1)%sf(:, :, :) ! dudz
         end do
 
         if (surface_tension) then

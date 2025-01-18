@@ -25,7 +25,9 @@ module m_ibm
                s_interpolate_image_point, &
                s_find_ghost_points, &
                s_find_num_ghost_points, &
-               s_find_num_sphere_markers
+               s_find_num_sphere_markers, &
+               s_find_sphere_markers_loc, & 
+               s_readwrite_sphere_surface_data
     ; public :: s_initialize_ibm_module, &
  s_ibm_setup, &
  s_ibm_correct_state, &
@@ -47,9 +49,10 @@ module m_ibm
 
     ! variables for drag calculation
     integer, dimension(:), allocatable :: num_sphere_markers
-    integer, dimension(:, :, :), allocatable :: sphere_markers_loc 
+    type(scalar_field), dimension(:), allocatable :: sphere_markers_loc
+    type(scalar_field), dimension(:), allocatable :: data_plane_area  
 
-    !$acc declare create(num_sphere_markers, sphere_markers_loc)
+    !$acc declare create(num_sphere_markers, sphere_markers_loc, data_plane_area)
 
 contains
 
@@ -117,10 +120,25 @@ contains
         ! setup for drag calculation
         call s_find_num_sphere_markers()
         !$acc update device(num_sphere_markers)
-        !do i = 1, num_ibs
-        !    @:ALLOCATE(sphere_markers_loc(num_ibs, num_sphere_markers, 3))
-        !end do
-        !$acc enter data copyin(sphere_markers_loc) 
+
+        @:ALLOCATE(sphere_markers_loc(1:num_ibs))
+        do i = 1, num_ibs
+            @:ALLOCATE(sphere_markers_loc(i)%sf(1, num_sphere_markers(i), 3))
+            @:ACC_SETUP_SFs(sphere_markers_loc(i))
+        end do
+
+        @:ALLOCATE(data_plane_area(1:num_ibs))
+        do i = 1, num_ibs
+            @:ALLOCATE(data_plane_area(i)%sf(1, 1, num_sphere_markers(i)))
+            @:ACC_SETUP_SFs(data_plane_area(i))
+        end do
+
+        !$acc enter data copyin(sphere_markers_loc, data_plane_area) 
+        call s_find_sphere_markers_loc()
+        !$acc update device(sphere_markers_loc)
+
+        call s_readwrite_sphere_surface_data()
+        !$acc update device(data_plane_area)
 
 
     end subroutine s_ibm_setup
@@ -589,7 +607,7 @@ contains
     integer :: i, j, k, i_ibs
 
         do i_ibs = 1, num_ibs
-            num_sphere_markers(num_ibs) = 0 ! initialize to zero for each ib
+            num_sphere_markers(i_ibs) = 0 ! initialize to zero for each ib
 
             do i = 0, m
                 do j = 0, n 
@@ -603,10 +621,90 @@ contains
             end do
         end do
 
-
-
     end subroutine s_find_num_sphere_markers
 
+    ! find the i, j, k indices for the markers for each ib
+    subroutine s_find_sphere_markers_loc()
+        integer :: i, j, k, i_ibs, count
+
+        do i_ibs = 1, num_ibs
+
+            count = 0 ! reinitialize count for every ib
+
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        if (abs(levelset%sf(i, j, k, i_ibs)) < sqrt( (dx(i)/2._wp)**2 + (dy(j)/2._wp)**2 + (dz(k)/2._wp)**2 )) then 
+                            count = count + 1
+
+                            sphere_markers_loc(i_ibs)%sf(1, count, 1) = i
+                            sphere_markers_loc(i_ibs)%sf(1, count, 2) = j
+                            sphere_markers_loc(i_ibs)%sf(1, count, 3) = k
+
+                        end if 
+                    end do
+                end do
+            end do
+        end do
+
+    end subroutine s_find_sphere_markers_loc
+
+    subroutine s_readwrite_sphere_surface_data()
+        real(wp) :: surface_dist, temp_area, temp_vf
+        real(wp), dimension(1:3) :: surface_loc
+        integer :: i, j, k, ivar, jvar, kvar, i_ibs, count
+        integer, dimension(1:num_ibs) :: total_num_sphere_markers
+
+        open(unit=105, file='sphere_data_MFC.txt', status='unknown')
+
+        do i_ibs = 1, num_ibs
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        if (abs(levelset%sf(i, j, k, i_ibs)) < sqrt( (dx(i)/2._wp)**2 + (dy(j)/2._wp)**2 + (dz(k)/2._wp)**2 )) then 
+                            surface_loc(1) = x_cc(i) + levelset%sf(i, j, k, i_ibs)*levelset_norm%sf(i, j, k, i_ibs, 1)
+                            surface_loc(2) = y_cc(j) + levelset%sf(i, j, k, i_ibs)*levelset_norm%sf(i, j, k, i_ibs, 2)
+                            surface_loc(3) = z_cc(k) + levelset%sf(i, j, k, i_ibs)*levelset_norm%sf(i, j, k, i_ibs, 3)
+
+                            surface_dist = sqrt(sum(surface_loc**2))
+
+                            ! cell boundary locations, i j k indices, surface normal vector, distance to surface from cell center
+                            write(105, *) x_cb(i-1), x_cb(i), y_cb(j-1), y_cb(j), z_cb(k-1), z_cb(k), i, j, k, levelset_norm%sf(i, j, k, i_ibs, 1), levelset_norm%sf(i, j, k, i_ibs, 2), levelset_norm%sf(i, j, k, i_ibs, 3), surface_dist
+
+                        end if
+                    end do
+                end do
+            end do
+        end do
+
+        close(105)
+
+        open(unit=106, file='sphere_data_IRL.txt', status='old', action='read')
+
+        do i_ibs = 1, num_ibs
+            call s_mpi_allreduce_sum_integer(num_sphere_markers(i_ibs), total_num_sphere_markers(i_ibs))
+
+            count = 0
+            do i = 1, total_num_sphere_markers(i_ibs)
+                read(106, *) temp_area, temp_vf, ivar, jvar, kvar
+
+                if (ivar >= start_idx(1) .and. ivar <= start_idx(1) + m) then 
+                    if (jvar >= start_idx(2) .and. jvar <= start_idx(2) + n) then 
+                        if (kvar >= start_idx(3) .and. kvar <= start_idx(3) + p) then 
+                            
+                            count = count + 1
+                            data_plane_area(i_ibs)%sf(1, 1, count) = temp_area
+
+                        end if 
+                    end if
+                end if
+         
+            end do 
+        end do
+
+        close(106)
+
+    end subroutine s_readwrite_sphere_surface_data
 
     !>  Function that computes the interpolation coefficients of image points
     subroutine s_compute_interpolation_coeffs(ghost_points)
@@ -877,13 +975,21 @@ contains
 
     !> Subroutine to deallocate memory reserved for the IBM module
     subroutine s_finalize_ibm_module()
+        integer :: i
 
         @:DEALLOCATE(ib_markers%sf)
         @:DEALLOCATE(levelset%sf)
         @:DEALLOCATE(levelset_norm%sf)
 
         @:DEALLOCATE(num_sphere_markers)
-        !@:DEALLOCATE(sphere_markers_loc)
+        do i = 1, num_ibs
+            @:DEALLOCATE(sphere_markers_loc(i)%sf)
+        end do
+        @:DEALLOCATE(sphere_markers_loc)
+        do i = 1, num_ibs
+            @:DEALLOCATE(data_plane_area(i)%sf)
+        end do
+        @:DEALLOCATE(data_plane_area)
 
     end subroutine s_finalize_ibm_module
 

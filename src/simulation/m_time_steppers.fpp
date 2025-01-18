@@ -329,9 +329,12 @@ contains
         end if
 
         ! clear drag output file for use in m_time_steppers
-        open(unit=100, file='FD.txt', status='unknown')
+        open(unit=100, file='FD_vi.txt', status='unknown')
         write(100, *)
         close(100)
+        open(unit=101, file='FD_si.txt', status='unknown')
+        write(101, *)
+        close(101)
 
     end subroutine s_initialize_time_steppers_module
 
@@ -919,8 +922,6 @@ contains
         ! initialize F_D to zero
         F_D = 0
 
-        open(unit=101, file='FD.txt', status='old', position='append')
-
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
@@ -937,9 +938,10 @@ contains
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
         C_D = F_D_global / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
 
-        print *, 'C_D: ', C_D
-        write(101, *) F_D_global
-        close(101)
+        print *, 'C_D (vi): ', C_D
+        open(unit=102, file='FD_vi.txt', status='old', position='append')
+        write(102, *) F_D_global
+        close(102)
 
     end subroutine s_compute_dragforce_vi
 
@@ -947,26 +949,175 @@ contains
     subroutine s_compute_dragforce_si(q_prim_vf, du_dxyz)
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         type(vector_field), dimension(1:3), intent(in) :: du_dxyz
-        integer :: i, j, k, i_ibs, i_sphere_markers
+        real(wp) :: x_surf, y_surf, z_surf, pressure_surf, F_D, F_D_global, mu_visc, C_D, divergence_u
+        real(wp), dimension(1:3) :: dudx_surf, dudy_surf, dudz_surf, F_D_mat
+        real(wp), dimension(1:3, 1:3) :: stress_tensor
+    
+        integer :: i, j, k, l, q, i_ibs, i_sphere_markers
+
+        mu_visc = 0.05558135178876695
         
-        print *, 'surface integral'
         do i_ibs = 1, num_ibs
-            print *, i_ibs
-            print *, num_sphere_markers(i_ibs)
+            print *, 'ib # ', i_ibs
+            print *, 'number of markers on ib ', num_sphere_markers(i_ibs)
 
+            do i_sphere_markers = 1, num_sphere_markers(i_ibs)
 
-            do i_sphere_markers = 0, num_sphere_markers(i_ibs)
-                
+                i = sphere_markers_loc(i_ibs)%sf(1, i_sphere_markers, 1)
+                j = sphere_markers_loc(i_ibs)%sf(1, i_sphere_markers, 2)
+                k = sphere_markers_loc(i_ibs)%sf(1, i_sphere_markers, 3)
 
-                !i = sphere_markers_loc(i_ibs, i_sphere_markers, 1)
-                !j = sphere_markers_loc(i_ibs, i_sphere_markers, 2)
-                !k = sphere_markers_loc(i_ibs, i_sphere_markers, 3)
-            
+                ! x-dir ============================================================
+                if (abs(levelset_norm%sf(i, j, k, i_ibs, 1)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 2)) .and. abs(levelset_norm%sf(i, j, k, i_ibs, 1)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 3))) then 
+                    if (x_cc(i) < patch_ib(i_ibs)%x_centroid) then
+                        x_surf = patch_ib(i_ibs)%x_centroid & 
+                            - sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (y_cc(j) - patch_ib(i_ibs)%y_centroid)**2.0 & 
+                            - (z_cc(k) - patch_ib(i_ibs)%z_centroid)**2.0)
+                        
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i-1, j, k) + (x_surf - x_cc(i-1))/(x_cc(i) - x_cc(i-1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i-1, j, k))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i-1, j, k) + (x_surf - x_cc(i-1))/(x_cc(i) - x_cc(i-1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i-1, j, k))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i-1, j, k) + (x_surf - x_cc(i-1))/(x_cc(i) - x_cc(i-1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i-1, j, k))
 
-            end do
-        end do
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i-1, j, k) + (x_surf - x_cc(i-1))/(x_cc(i) - x_cc(i-1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i-1, j, k))
+
+                    else if (x_cc(i) > patch_ib(i_ibs)%x_centroid) then 
+                        x_surf = patch_ib(i_ibs)%x_centroid & 
+                            + sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (y_cc(j) - patch_ib(i_ibs)%y_centroid)**2.0 & 
+                            - (z_cc(k) - patch_ib(i_ibs)%z_centroid)**2.0)
+
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i+1, j, k) + (x_surf - x_cc(i+1))/(x_cc(i) - x_cc(i+1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i+1, j, k))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i+1, j, k) + (x_surf - x_cc(i+1))/(x_cc(i) - x_cc(i+1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i+1, j, k))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i+1, j, k) + (x_surf - x_cc(i+1))/(x_cc(i) - x_cc(i+1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i+1, j, k))
+
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i+1, j, k) + (x_surf - x_cc(i+1))/(x_cc(i) - x_cc(i+1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i+1, j, k))
+                    
+                    end if
+
+                ! y-dir ============================================================
+                else if (abs(levelset_norm%sf(i, j, k, i_ibs, 2)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 1)) .and. abs(levelset_norm%sf(i, j, k, i_ibs, 2)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 3))) then 
+                    if (y_cc(j) < patch_ib(i_ibs)%y_centroid) then 
+                        y_surf = patch_ib(i_ibs)%y_centroid & 
+                            - sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (x_cc(i) - patch_ib(i_ibs)%x_centroid)**2.0 & 
+                            - (z_cc(k) - patch_ib(i_ibs)%z_centroid)**2.0)
+
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i, j-1, k) + (y_surf - y_cc(j-1))/(y_cc(j) - y_cc(j-1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i, j-1, k))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i, j-1, k) + (y_surf - y_cc(j-1))/(y_cc(j) - y_cc(j-1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i, j-1, k))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i, j-1, k) + (y_surf - y_cc(j-1))/(y_cc(j) - y_cc(j-1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i, j-1, k))
+
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i, j-1, k) + (y_surf - y_cc(j-1))/(y_cc(j) - y_cc(j-1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i, j-1, k))
+
+                    else if (y_cc(j) > patch_ib(i_ibs)%y_centroid) then 
+                        y_surf = patch_ib(i_ibs)%y_centroid & 
+                            + sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (x_cc(i) - patch_ib(i_ibs)%x_centroid)**2.0 & 
+                            - (z_cc(k) - patch_ib(i_ibs)%z_centroid)**2.0)
+
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i, j+1, k) + (y_surf - y_cc(j+1))/(y_cc(j) - y_cc(j+1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i, j+1, k))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i, j+1, k) + (y_surf - y_cc(j+1))/(y_cc(j) - y_cc(j+1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i, j+1, k))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i, j+1, k) + (y_surf - y_cc(j+1))/(y_cc(j) - y_cc(j+1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i, j+1, k))
+
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i, j+1, k) + (y_surf - y_cc(j+1))/(y_cc(j) - y_cc(j+1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i, j+1, k))
+                    
+                    end if
+
+                ! z-dir ============================================================
+                else if (abs(levelset_norm%sf(i, j, k, i_ibs, 3)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 1)) .and. abs(levelset_norm%sf(i, j, k, i_ibs, 3)) >= abs(levelset_norm%sf(i, j, k, i_ibs, 2))) then 
+                    if (z_cc(k) < patch_ib(i_ibs)%z_centroid) then
+                        z_surf = patch_ib(i_ibs)%z_centroid & 
+                            - sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (x_cc(i) - patch_ib(i_ibs)%x_centroid)**2.0 & 
+                            - (y_cc(j) - patch_ib(i_ibs)%y_centroid)**2.0)
+
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i, j, k-1) + (z_surf - z_cc(k-1))/(z_cc(k) - z_cc(k-1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i, j, k-1))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i, j, k-1) + (z_surf - z_cc(k-1))/(z_cc(k) - z_cc(k-1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i, j, k-1))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i, j, k-1) + (z_surf - z_cc(k-1))/(z_cc(k) - z_cc(k-1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i, j, k-1))
+
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i, j, k-1) + (z_surf - z_cc(k-1))/(z_cc(k) - z_cc(k-1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i, j, k-1))
+
+                    else if (z_cc(k) > patch_ib(i_ibs)%z_centroid) then 
+                        z_surf = patch_ib(i_ibs)%z_centroid & 
+                            + sqrt(patch_ib(i_ibs)%radius**2.0 & 
+                            - (x_cc(i) - patch_ib(i_ibs)%x_centroid)**2.0 & 
+                            - (y_cc(j) - patch_ib(i_ibs)%y_centroid)**2.0)
+
+                        do l = 1, 3
+                            dudx_surf(l) = du_dxyz(l)%vf(1)%sf(i, j, k+1) + (z_surf - z_cc(k+1))/(z_cc(k) - z_cc(k+1))*(du_dxyz(l)%vf(1)%sf(i, j, k) - du_dxyz(l)%vf(1)%sf(i, j, k+1))
+                            dudy_surf(l) = du_dxyz(l)%vf(2)%sf(i, j, k+1) + (z_surf - z_cc(k+1))/(z_cc(k) - z_cc(k+1))*(du_dxyz(l)%vf(2)%sf(i, j, k) - du_dxyz(l)%vf(2)%sf(i, j, k+1))
+                            dudz_surf(l) = du_dxyz(l)%vf(3)%sf(i, j, k+1) + (z_surf - z_cc(k+1))/(z_cc(k) - z_cc(k+1))*(du_dxyz(l)%vf(3)%sf(i, j, k) - du_dxyz(l)%vf(3)%sf(i, j, k+1))
+
+                        end do
+                        pressure_surf = q_prim_vf(5)%sf(i, j, k+1) + (z_surf - z_cc(k+1))/(z_cc(k) - z_cc(k+1))*(q_prim_vf(5)%sf(i, j, k) - q_prim_vf(5)%sf(i, j, k+1))
+
+                    end if
+
+                else 
+                    print *, 'FAILURE TO INTERPOLATE: SURFACE NORM'
+                end if ! end interpolation to surface
+
+                ! drag force calculation ============================================================
+                do l = 1, 3
+                    F_D_mat(l) = 0._wp
+                end do
+
+                do l = 1, 3
+                    stress_tensor(l, 1) = dudx_surf(l)
+                    stress_tensor(l, 2) = dudy_surf(l)
+                    stress_tensor(l, 3) = dudz_surf(l)
+                end do 
+
+                do l = 1, 3
+                    stress_tensor(1, l) = stress_tensor(1, l) + dudx_surf(l)
+                    stress_tensor(2, l) = stress_tensor(2, l) + dudy_surf(l)
+                    stress_tensor(3, l) = stress_tensor(3, l) + dudz_surf(l)
+                end do
+
+                divergence_u = dudx_surf(1) + dudy_surf(2) + dudz_surf(3) ! du1dx + du2dy + du3dz
+
+                do l = 1, 3
+                    stress_tensor(l, l) = stress_tensor(l, l) - (2._wp/3._wp * divergence_u)
+                end do
+
+                stress_tensor = -mu_visc * stress_tensor
+
+                do l = 1, 3
+                    stress_tensor(l, l) = stress_tensor(l,l) + pressure_surf
+                end do
+
+                do l = 1, 3
+                    do q = 1, 3
+                        F_D_mat(l) = F_D_mat(l) + stress_tensor(l, q) * levelset_norm%sf(i, j, k, i_ibs, q)
+                    end do
+                end do
+
+                F_D_mat = F_D_mat * data_plane_area(i_ibs)%sf(1, 1, i_sphere_markers)
+
+                F_D = F_D + F_D_mat(1)
+
+            end do ! marker loop
+        end do ! ib loop
         
+        call s_mpi_allreduce_sum(F_D, F_D_global)
 
+        C_D = F_D_global / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
+
+        print *, 'C_D (si): ', C_D
+
+        open(unit=103, file='FD_si.txt', status='old', position='append')
+        write(103, *) F_D_global
+        close(103)
 
     end subroutine s_compute_dragforce_si 
 

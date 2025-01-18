@@ -363,6 +363,22 @@ contains
 
     end subroutine s_mpi_allreduce_sum
 
+    ! perform reduction for integers
+    subroutine s_mpi_allreduce_sum_integer(var_loc, var_glb)
+
+        integer, intent(in) :: var_loc
+        integer, intent(out) :: var_glb
+
+#ifdef MFC_MPI
+
+        ! performing the reduction procedure
+        call MPI_ALLREDUCE(var_loc, var_glb, 1, MPI_INTEGER, &
+                           MPI_SUM, MPI_COMM_WORLD, ierr)
+
+#endif
+
+    end subroutine s_mpi_allreduce_sum_integer
+
     !>  The following subroutine takes the input local variable
         !!      from all processors and reduces to the minimum of all
         !!      values. The reduced variable is recorded back onto the
