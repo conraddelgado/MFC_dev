@@ -79,9 +79,13 @@ module m_time_steppers
 
     type(vector_field), allocatable, dimension(:) :: du_dxyz ! dudx, dudy, dudz 
 
+    ! periodic forcing variables
+    type(scalar_field), allocatable, dimension(:) :: q_bar
+    type(scalar_field), allocatable, dimension(:) :: q_periodic_force
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
-    !$acc declare create(rhs_rhouu. du_dxyz)
+    !$acc declare create(rhs_rhouu, du_dxyz)
+    !$acc declare create(q_bar, q_periodic_force)
 
 contains
 
@@ -318,6 +322,20 @@ contains
             end do
             @:ACC_SETUP_VFs(du_dxyz(i))
         end do
+
+        ! allocating periodic forcing variables
+        @:ALLOCATE(q_bar(1:5))
+        @:ALLOCATE(q_periodic_force(1:8))
+
+        do i = 1, 5
+            @:ALLOCATE(q_bar(i)%sf(0:m, 0:n, 0:p))
+            @:ACC_SETUP_SFs(q_bar(i))
+        end do
+
+        do i = 1, 8
+            @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
+            @:ACC_SETUP_SFs(q_periodic_force(i))
+        end do 
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -654,11 +672,20 @@ contains
             call nvtxStartRange("TIMESTEP")
         end if
 
+        if (t_step > 0) then
+            call s_compute_phase_average(q_prim_vf, q_bar, t_step)
+            call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+        end if
+
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         call s_compute_dragforce_si(q_prim_vf, du_dxyz)
+
+        if (t_step > 0) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
 
         if (run_time_info) then
             call s_write_run_time_information(q_prim_vf, t_step)
@@ -750,6 +777,10 @@ contains
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
+        if (t_step > 0) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
+
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=2)
             call s_update_lagrange_tdv_rk(stage=2)
@@ -826,6 +857,10 @@ contains
         ! Stage 3 of 3
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
+
+        if (t_step > 0) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
 
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=3)
@@ -916,7 +951,8 @@ contains
     subroutine s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         type(scalar_field), dimension(sys_size), intent(in) :: rhs_rhouu
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
-        real(wp) :: F_D, F_D_global, C_D
+        real(wp), dimension(1:num_ibs) :: F_D, F_D_global
+        real(wp) :: C_D
         integer :: i, j, k
 
         ! initialize F_D to zero
@@ -925,18 +961,22 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-
-                    F_D = F_D + rhs_rhouu(2)%sf(i, j, k) * ib_markers%sf(i, j, k)*dx(i)*dy(j)*dz(k)
-
+                    if (ib_markers%sf(i, j, k) /= 0) then 
+                        
+                        F_D(ib_markers%sf(i, j, k)) = F_D(ib_markers%sf(i, j, k)) + rhs_rhouu(2)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
+                    
+                    end if
                 end do 
             end do 
         end do
 
         ! reduce drag force to one value
-        call s_mpi_allreduce_sum(F_D, F_D_global)
+        do i = 1, num_ibs
+            call s_mpi_allreduce_sum(F_D(i), F_D_global(i))
+        end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
-        C_D = F_D_global / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
         open(unit=102, file='FD_vi.txt', status='old', position='append')
@@ -949,16 +989,18 @@ contains
     subroutine s_compute_dragforce_si(q_prim_vf, du_dxyz)
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         type(vector_field), dimension(1:3), intent(in) :: du_dxyz
-        real(wp) :: x_surf, y_surf, z_surf, pressure_surf, F_D, F_D_global, mu_visc, C_D, divergence_u
+        real(wp) :: x_surf, y_surf, z_surf, pressure_surf, mu_visc, C_D, divergence_u
         real(wp), dimension(1:3) :: dudx_surf, dudy_surf, dudz_surf, F_D_mat
         real(wp), dimension(1:3, 1:3) :: stress_tensor
+
+        real(wp), dimension(1:num_ibs) :: F_D, F_D_global
     
         integer :: i, j, k, l, q, i_ibs, i_sphere_markers
 
         mu_visc = 0.05558135178876695
         
         do i_ibs = 1, num_ibs
-            print *, 'ib # ', i_ibs
+            print *, 'ib # ', i_ibs, F_D(i_ibs)
             print *, 'number of markers on ib ', num_sphere_markers(i_ibs)
 
             do i_sphere_markers = 1, num_sphere_markers(i_ibs)
@@ -1104,14 +1146,16 @@ contains
 
                 F_D_mat = F_D_mat * data_plane_area(i_ibs)%sf(1, 1, i_sphere_markers)
 
-                F_D = F_D + F_D_mat(1)
+                F_D(i_ibs) = F_D(i_ibs) + F_D_mat(1)
 
             end do ! marker loop
         end do ! ib loop
         
-        call s_mpi_allreduce_sum(F_D, F_D_global)
-
-        C_D = F_D_global / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
+        do i = 1, num_ibs
+            call s_mpi_allreduce_sum(F_D(i), F_D_global(i))
+        end do
+        
+        C_D = -F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (si): ', C_D
 
@@ -1120,6 +1164,142 @@ contains
         close(103)
 
     end subroutine s_compute_dragforce_si 
+
+    ! computes the phase average (time and space) of rho*u, rho, and T
+    subroutine s_compute_phase_average(q_prim_vf, q_bar, t_step)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
+        type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
+
+        real(wp), dimension(1:3) :: rhou_spatial_avg
+        real(wp) :: rho_spatial_avg, P_spatial_avg, T_spatial_avg, N_x_total
+        
+        real(wp), dimension(1:3) :: rhou_spatial_avg_glb
+        real(wp) :: rho_spatial_avg_glb, P_spatial_avg_glb, T_spatial_avg_glb, N_x_total_glb
+
+        real(wp) :: R, rho_inf, u_inf, T_inf, volfrac_phi
+        integer :: i, j, k, t_step
+
+        R = 287.0 ! gas constant air
+
+        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+
+        N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
+        call s_mpi_allreduce_sum(N_x_total, N_x_total_glb)
+
+        ! initialize
+        rho_spatial_avg = 0._wp
+        P_spatial_avg = 0._wp
+        rhou_spatial_avg(1) = 0._wp
+        rhou_spatial_avg(2) = 0._wp
+        rhou_spatial_avg(3) = 0._wp
+
+        ! spatial average
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p 
+                    if (ib_markers%sf(i, j, k) == 0) then
+                        rho_spatial_avg = rho_spatial_avg + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(1)%sf(i, j, k)
+                        P_spatial_avg = P_spatial_avg + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(5)%sf(i, j, k)
+
+                        rhou_spatial_avg(1) = rhou_spatial_avg(1) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(2)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        rhou_spatial_avg(2) = rhou_spatial_avg(2) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(3)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        rhou_spatial_avg(3) = rhou_spatial_avg(3) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(4)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                    end if
+                end do
+            end do
+        end do
+
+        call s_mpi_allreduce_sum(rho_spatial_avg, rho_spatial_avg_glb)
+        call s_mpi_allreduce_sum(T_spatial_avg, T_spatial_avg_glb)
+        call s_mpi_allreduce_sum(rhou_spatial_avg(1), rhou_spatial_avg_glb(1))
+        call s_mpi_allreduce_sum(rhou_spatial_avg(2), rhou_spatial_avg_glb(2))
+        call s_mpi_allreduce_sum(rhou_spatial_avg(3), rhou_spatial_avg_glb(3))
+
+        rho_spatial_avg_glb = rho_spatial_avg_glb / N_x_total_glb
+        P_spatial_avg_glb = P_spatial_avg_glb / N_x_total_glb
+        T_spatial_avg_glb = P_spatial_avg_glb / (rho_spatial_avg_glb * R)
+        rhou_spatial_avg_glb(1) = rhou_spatial_avg_glb(1) / N_x_total_glb
+        rhou_spatial_avg_glb(2) = rhou_spatial_avg_glb(2) / N_x_total_glb
+        rhou_spatial_avg_glb(3) = rhou_spatial_avg_glb(3) / N_x_total_glb
+
+        ! time average
+        do i = 0, m 
+            do j = 0, n
+                do k = 0, p 
+                    if (ib_markers%sf(i, j, k) == 0) then
+                        ! rho*u bar
+                        q_bar(1)%sf(i, j, k) = ( (rhou_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(2)%sf(i, j, k) = ( (rhou_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(3)%sf(i, j, k) = ( (rhou_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        
+                        ! rho bar
+                        q_bar(4)%sf(i, j, k) = ( (rho_spatial_avg_glb + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        ! T bar
+                        q_bar(5)%sf(i, j, k) = ( (T_spatial_avg_glb + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    end if
+                end do 
+            end do 
+        end do
+
+    end subroutine s_compute_phase_average
+
+    ! computes the periodic forcing terms described in Khalloufi and Capecelatro
+    subroutine s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
+        type(scalar_field), dimension(1:5), intent(inout) :: q_bar
+        type(scalar_field), dimension(1:8), intent(inout) :: q_periodic_force
+
+        real(wp) :: rho_inf, u_inf, T_inf
+        integer :: i, j, k, l
+
+        rho_inf = 1.225
+        u_inf = 680.6
+        T_inf = 288.2
+
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    ! f_u
+                    q_periodic_force(1)%sf(i, j, k) = (rho_inf*u_inf - q_bar(1)%sf(i, j, k)) / dt
+                    q_periodic_force(2)%sf(i, j, k) = (rho_inf*u_inf - q_bar(2)%sf(i, j, k)) / dt
+                    q_periodic_force(3)%sf(i, j, k) = (rho_inf*u_inf - q_bar(3)%sf(i, j, k)) / dt
+
+                    ! u*f_u
+                    q_periodic_force(4)%sf(i, j, k) = q_prim_vf(2)%sf(i, j, k) * q_periodic_force(1)%sf(i, j, k)
+                    q_periodic_force(5)%sf(i, j, k) = q_prim_vf(3)%sf(i, j, k) * q_periodic_force(2)%sf(i, j, k)
+                    q_periodic_force(6)%sf(i, j, k) = q_prim_vf(4)%sf(i, j, k) * q_periodic_force(3)%sf(i, j, k)
+
+                    ! f_rho
+                    q_periodic_force(7)%sf(i, j, k) = (rho_inf - q_bar(4)%sf(i, j, k)) / dt
+
+                    ! f_T
+                    q_periodic_force(8)%sf(i, j, k) = (q_prim_vf(1)%sf(i, j, k) / 1.4) * (T_inf - q_bar(5)%sf(i, j, k)) / dt
+                end do 
+            end do
+        end do
+
+    end subroutine s_compute_periodic_forcing
+
+    ! adds periodic forcing terms to RHS, as detailed in Khalloufi and Capecelatro
+    subroutine s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        type(scalar_field), dimension(sys_size), intent(inout) :: rhs_vf
+        type(scalar_field), dimension(1:8), intent(inout) :: q_periodic_force
+
+        integer :: i, j, k
+
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    if (ib_markers%sf(i, j, k) == 0) then
+                        rhs_vf(1)%sf(i, j, k) = rhs_vf(1)%sf(i, j, k) + q_periodic_force(7)%sf(i, j, k) ! continuity
+                        rhs_vf(2)%sf(i, j, k) = rhs_vf(2)%sf(i, j, k) + q_periodic_force(1)%sf(i, j, k) ! x momentum
+                        rhs_vf(5)%sf(i, j, k) = rhs_vf(5)%sf(i, j, k) + q_periodic_force(4)%sf(i, j, k) + q_periodic_force(8)%sf(i, j, k) ! energy
+                    end if 
+                end do
+            end do
+        end do
+
+    end subroutine s_add_periodic_forcing
 
     !> Strang splitting scheme with 3rd order TVD RK time-stepping algorithm for
         !!      the flux term and adaptive time stepping algorithm for
@@ -1535,7 +1715,17 @@ contains
             @:DEALLOCATE(du_dxyz(i)%vf)
         end do
         @:DEALLOCATE(du_dxyz)
+
+        do i = 1, 5
+            @:DEALLOCATE(q_bar(i)%sf)
+        end do
+        @:DEALLOCATE(q_bar)
         
+        do i = 1, 8
+            @:DEALLOCATE(q_periodic_force(i)%sf)
+        end do
+        @:DEALLOCATE(q_periodic_force)
+
         ! Writing the footer of and closing the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
             call s_close_run_time_information_file()

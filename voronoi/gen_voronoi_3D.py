@@ -55,12 +55,12 @@ if (__name__ == '__main__'):
     D = 0.1
     L = 10*D
 
-    N = int( 6*phi*L**3 / (np.pi*D**3) )
-    print(f'volume fraction phi: {phi}, number of spheres: {N}')
+    N_sphere = int( 6*phi*L**3 / (np.pi*D**3) )
+    print(f'volume fraction phi: {phi}, number of spheres: {N_sphere}')
 
-    x_i = L/2 * np.random.uniform(-1, 1, N)
-    y_i = L/2 * np.random.uniform(-1, 1, N)
-    z_i = L/2 * np.random.uniform(-1, 1, N)
+    x_i = L/2 * np.random.uniform(-1, 1, N_sphere)
+    y_i = L/2 * np.random.uniform(-1, 1, N_sphere)
+    z_i = L/2 * np.random.uniform(-1, 1, N_sphere)
 
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
     box = freud.box.Box.cube(L)
