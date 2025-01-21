@@ -37,13 +37,13 @@ print(
             "z_domain%beg": -5.0 * D,
             "z_domain%end": 5.0 * D,
             "cyl_coord": "F",
-            "m": 127,
-            "n": 127,
-            "p": 127,
+            "m": 256,
+            "n": 256,
+            "p": 256,
             "dt": 1.0e-6,
             "t_step_start": 0,
-            "t_step_stop": 10,  # 3000
-            "t_step_save": 1,  # 10
+            "t_step_stop": 10000,  # 3000
+            "t_step_save": 100,  # 10
             # Simulation Algorithm Parameters
             # Only one patches are necessary, the air tube
             "num_patches": 1,
