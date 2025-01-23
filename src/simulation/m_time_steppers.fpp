@@ -703,8 +703,6 @@ contains
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
         
-        print *, rhs_vf(2)%sf(70,30,35)
-
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 

@@ -20,6 +20,10 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
+Nx = 256
+Ny = Nx
+Nz = Ny
+
 # Configuring case dictionary
 print(
     json.dumps(
@@ -37,9 +41,9 @@ print(
             "z_domain%beg": -5.0 * D,
             "z_domain%end": 5.0 * D,
             "cyl_coord": "F",
-            "m": 128,
-            "n": 128,
-            "p": 128,
+            "m": Nx,
+            "n": Ny,
+            "p": Nz,
             "dt": 1.0e-6,
             "t_step_start": 0,
             "t_step_stop": 10000,  # 3000
