@@ -696,6 +696,7 @@ contains
         end if
 
         ! drag calculation spatial velocity derivatives
+        !$acc parallel loop gang vector default(present)
         do i = 1, 3
                 du_dxyz(i)%vf(1)%sf(:, :, :) = dq_prim_dx_qp(1)%vf(i+1)%sf(:, :, :) ! dudx
                 du_dxyz(i)%vf(2)%sf(:, :, :) = dq_prim_dy_qp(1)%vf(i+1)%sf(:, :, :) ! dudy

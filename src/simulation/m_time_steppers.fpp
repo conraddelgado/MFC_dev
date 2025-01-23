@@ -78,14 +78,21 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: rhs_rhouu
     type(vector_field), allocatable, dimension(:) :: du_dxyz ! dudx, dudy, dudz 
     real(wp), allocatable, dimension(:) :: F_D_vi
+    real(wp), allocatable, dimension(:) :: F_D_si
+    real(wp) :: x_surf, y_surf, z_surf, pressure_surf
+    real(wp), allocatable, dimension(:) :: dudx_surf, dudy_surf, dudz_surf, F_D_mat
+    real(wp), allocatable, dimension(:, :) :: stress_tensor
 
     ! periodic forcing variables
     type(scalar_field), allocatable, dimension(:) :: q_bar
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
+    real(wp), allocatable, dimension(:) :: q_spatial_avg, q_spatial_avg_glb
+    real(wp) :: N_x_total, N_x_total_glb, volfrac_phi
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
-    !$acc declare create(rhs_rhouu, du_dxyz)
-    !$acc declare create(q_bar, q_periodic_force)
+    !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
+    !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
+    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total, N_x_total_glb, volfrac_phi)
 
 contains
 
@@ -324,6 +331,15 @@ contains
         end do
 
         @:ALLOCATE(F_D_vi(num_ibs))
+        @:ALLOCATE(F_D_si(num_ibs))
+
+        @:ALLOCATE(dudx_surf(1:3))
+        @:ALLOCATE(dudy_surf(1:3))
+        @:ALLOCATE(dudz_surf(1:3))
+
+        @:ALLOCATE(stress_tensor(1:3, 1:3))
+        @:ALLOCATE(F_D_mat(1:3))
+
 
         ! allocating periodic forcing variables
         @:ALLOCATE(q_bar(1:5))
@@ -338,6 +354,9 @@ contains
             @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
             @:ACC_SETUP_SFs(q_periodic_force(i))
         end do 
+        
+        @:ALLOCATE(q_spatial_avg(1:6))
+        @:ALLOCATE(q_spatial_avg_glb(1:6))
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -675,12 +694,16 @@ contains
         end if
 
         if (t_step > 0) then
-            call s_compute_phase_average(q_prim_vf, q_bar, t_step)
+            call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
             call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
         end if
 
+        print *, 'period: ', q_periodic_force(1)%sf(1, 1, 1)
+
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
+        
+        print *, rhs_vf(2)%sf(70,30,35)
 
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         call s_compute_dragforce_si(q_prim_vf, du_dxyz)
@@ -960,7 +983,7 @@ contains
         ! initialize F_D to zero
         !$acc parallel loop gang vector default(present)
         do i = 1, num_ibs
-            F_D_vi(i) = 0.0
+            F_D_vi(i) = 0._wp
         end do
 
         !$acc parallel loop collapse(3) gang vector default(present)
@@ -969,14 +992,13 @@ contains
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) /= 0) then 
                         
+                        !$acc atomic 
                         F_D_vi(ib_markers%sf(i, j, k)) = F_D_vi(ib_markers%sf(i, j, k)) + rhs_rhouu(2)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
                     
                     end if
                 end do 
             end do 
         end do
-
-        !$acc update host(F_D_vi, q_prim_vf(1)%sf, q_prim_vf(2)%sf)
 
         ! reduce drag force to one value
         do i = 1, num_ibs
@@ -997,20 +1019,21 @@ contains
     subroutine s_compute_dragforce_si(q_prim_vf, du_dxyz)
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         type(vector_field), dimension(1:3), intent(in) :: du_dxyz
-        real(wp) :: x_surf, y_surf, z_surf, pressure_surf, mu_visc, C_D, divergence_u
-        real(wp), dimension(1:3) :: dudx_surf, dudy_surf, dudz_surf, F_D_mat
-        real(wp), dimension(1:3, 1:3) :: stress_tensor
+        real(wp) :: mu_visc, C_D, divergence_u
 
-        real(wp), dimension(1:num_ibs) :: F_D, F_D_global
+        real(wp), dimension(1:num_ibs) :: F_D_global
     
         integer :: i, j, k, l, q, i_ibs, i_sphere_markers
 
         mu_visc = 0.05558135178876695
 
-        do i_ibs = 1, num_ibs
-            print *, 'ib # ', i_ibs, F_D(i_ibs)
-            print *, 'number of markers on ib ', num_sphere_markers(i_ibs)
+        !$acc parallel loop gang vector default(present)
+        do i = 1, num_ibs
+            F_D_si(i) = 0._wp
+        end do
 
+        !$acc parallel loop
+        do i_ibs = 1, num_ibs
             do i_sphere_markers = 1, num_sphere_markers(i_ibs)
 
                 i = sphere_markers_loc(i_ibs)%sf(1, i_sphere_markers, 1)
@@ -1154,13 +1177,13 @@ contains
 
                 F_D_mat = F_D_mat * data_plane_area(i_ibs)%sf(1, 1, i_sphere_markers)
 
-                F_D(i_ibs) = F_D(i_ibs) + F_D_mat(1)
+                F_D_si(i_ibs) = F_D_si(i_ibs) + F_D_mat(1)
 
             end do ! marker loop
         end do ! ib loop
         
         do i = 1, num_ibs
-            call s_mpi_allreduce_sum(F_D(i), F_D_global(i))
+            call s_mpi_allreduce_sum(F_D_si(i), F_D_global(i))
         end do
         
         C_D = -F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
@@ -1174,76 +1197,78 @@ contains
     end subroutine s_compute_dragforce_si 
 
     ! computes the phase average (time and space) of rho*u, rho, and T
-    subroutine s_compute_phase_average(q_prim_vf, q_bar, t_step)
+    subroutine s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
-
-        real(wp), dimension(1:3) :: rhou_spatial_avg
-        real(wp) :: rho_spatial_avg, P_spatial_avg, T_spatial_avg, N_x_total
-        
-        real(wp), dimension(1:3) :: rhou_spatial_avg_glb
-        real(wp) :: rho_spatial_avg_glb, P_spatial_avg_glb, T_spatial_avg_glb, N_x_total_glb
-
-        real(wp) :: R, rho_inf, u_inf, T_inf, volfrac_phi
+        real(wp), dimension(1:6), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T, 6 P
+        real(wp), dimension(1:6), intent(inout) :: q_spatial_avg_glb
+        real(wp) :: R
         integer :: i, j, k, t_step
 
         R = 287.0 ! gas constant air
 
         volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+        !$acc update device(volfrac_phi)
 
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
+        !$acc update device(N_x_total)
         call s_mpi_allreduce_sum(N_x_total, N_x_total_glb)
+        !$acc update device(N_x_total_glb)
 
         ! initialize
-        rho_spatial_avg = 0._wp
-        P_spatial_avg = 0._wp
-        rhou_spatial_avg(1) = 0._wp
-        rhou_spatial_avg(2) = 0._wp
-        rhou_spatial_avg(3) = 0._wp
+        !$acc parallel loop gang vector default(present)
+        do i = 1, 6
+            q_spatial_avg(i) = 0._wp
+        end do
 
         ! spatial average
+        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(4), q_spatial_avg(6), q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3))
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
-                        rho_spatial_avg = rho_spatial_avg + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(1)%sf(i, j, k)
-                        P_spatial_avg = P_spatial_avg + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(5)%sf(i, j, k)
+                        q_spatial_avg(4) = q_spatial_avg(4) + q_prim_vf(1)%sf(i, j, k)
+                        q_spatial_avg(6) = q_spatial_avg(6) + q_prim_vf(5)%sf(i, j, k)
 
-                        rhou_spatial_avg(1) = rhou_spatial_avg(1) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(2)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
-                        rhou_spatial_avg(2) = rhou_spatial_avg(2) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(3)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
-                        rhou_spatial_avg(3) = rhou_spatial_avg(3) + (1._wp - ib_markers%sf(i, j, k)) * q_prim_vf(4)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        q_spatial_avg(1) = q_spatial_avg(1) + q_prim_vf(2)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        q_spatial_avg(2) = q_spatial_avg(2) + q_prim_vf(3)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        q_spatial_avg(3) = q_spatial_avg(3) + q_prim_vf(4)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
                     end if
                 end do
             end do
         end do
 
-        call s_mpi_allreduce_sum(rho_spatial_avg, rho_spatial_avg_glb)
-        call s_mpi_allreduce_sum(T_spatial_avg, T_spatial_avg_glb)
-        call s_mpi_allreduce_sum(rhou_spatial_avg(1), rhou_spatial_avg_glb(1))
-        call s_mpi_allreduce_sum(rhou_spatial_avg(2), rhou_spatial_avg_glb(2))
-        call s_mpi_allreduce_sum(rhou_spatial_avg(3), rhou_spatial_avg_glb(3))
+        call s_mpi_allreduce_sum(q_spatial_avg(4), q_spatial_avg_glb(4))
+        call s_mpi_allreduce_sum(q_spatial_avg(6), q_spatial_avg_glb(6))
+        call s_mpi_allreduce_sum(q_spatial_avg(1), q_spatial_avg_glb(1))
+        call s_mpi_allreduce_sum(q_spatial_avg(2), q_spatial_avg_glb(2))
+        call s_mpi_allreduce_sum(q_spatial_avg(3), q_spatial_avg_glb(3))
 
-        rho_spatial_avg_glb = rho_spatial_avg_glb / N_x_total_glb
-        P_spatial_avg_glb = P_spatial_avg_glb / N_x_total_glb
-        T_spatial_avg_glb = P_spatial_avg_glb / (rho_spatial_avg_glb * R)
-        rhou_spatial_avg_glb(1) = rhou_spatial_avg_glb(1) / N_x_total_glb
-        rhou_spatial_avg_glb(2) = rhou_spatial_avg_glb(2) / N_x_total_glb
-        rhou_spatial_avg_glb(3) = rhou_spatial_avg_glb(3) / N_x_total_glb
+        q_spatial_avg_glb(4) = q_spatial_avg_glb(4) / N_x_total_glb
+        q_spatial_avg_glb(6) = q_spatial_avg_glb(6) / N_x_total_glb
+        q_spatial_avg_glb(5) = q_spatial_avg_glb(6) / (q_spatial_avg_glb(4) * R)
+        print *, 'T', q_spatial_avg_glb(5)
+        q_spatial_avg_glb(1) = q_spatial_avg_glb(1) / N_x_total_glb
+        q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
+        q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
+
+        !$acc update device(q_spatial_avg_glb)
 
         ! time average
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m 
             do j = 0, n
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
                         ! rho*u bar
-                        q_bar(1)%sf(i, j, k) = ( (rhou_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        q_bar(2)%sf(i, j, k) = ( (rhou_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        q_bar(3)%sf(i, j, k) = ( (rhou_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(1)%sf(i, j, k) = ( (q_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(2)%sf(i, j, k) = ( (q_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(3)%sf(i, j, k) = ( (q_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
                         
                         ! rho bar
-                        q_bar(4)%sf(i, j, k) = ( (rho_spatial_avg_glb + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(4)%sf(i, j, k) = ( (q_spatial_avg_glb(4) + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
                         ! T bar
-                        q_bar(5)%sf(i, j, k) = ( (T_spatial_avg_glb + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                        q_bar(5)%sf(i, j, k) = ( (q_spatial_avg_glb(5) + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
                     end if
                 end do 
             end do 
@@ -1263,7 +1288,9 @@ contains
         rho_inf = 1.225
         u_inf = 680.6
         T_inf = 288.2
+        !$acc enter data copyin(rho_inf, u_inf, T_inf)
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -1295,6 +1322,7 @@ contains
 
         integer :: i, j, k
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -1730,11 +1758,22 @@ contains
         @:DEALLOCATE(q_bar)
 
         @:DEALLOCATE(F_D_vi)
+        @:DEALLOCATE(F_D_si)
+
+        @:DEALLOCATE(dudx_surf)
+        @:DEALLOCATE(dudy_surf)
+        @:DEALLOCATE(dudz_surf)
+
+        @:DEALLOCATE(stress_tensor)
+        @:DEALLOCATE(F_D_mat)
         
         do i = 1, 8
             @:DEALLOCATE(q_periodic_force(i)%sf)
         end do
         @:DEALLOCATE(q_periodic_force)
+
+        @:DEALLOCATE(q_spatial_avg)
+        @:DEALLOCATE(q_spatial_avg_glb)
 
         ! Writing the footer of and closing the run-time information file
         if (proc_rank == 0 .and. run_time_info) then

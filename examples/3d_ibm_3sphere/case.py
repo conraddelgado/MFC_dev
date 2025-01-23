@@ -37,9 +37,9 @@ print(
             "z_domain%beg": -5.0 * D,
             "z_domain%end": 5.0 * D,
             "cyl_coord": "F",
-            "m": 256,
-            "n": 256,
-            "p": 256,
+            "m": 128,
+            "n": 128,
+            "p": 128,
             "dt": 1.0e-6,
             "t_step_start": 0,
             "t_step_stop": 10000,  # 3000
