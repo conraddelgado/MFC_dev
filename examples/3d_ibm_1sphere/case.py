@@ -24,8 +24,8 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 dt = 1.0E-06
 Nt = 7500
 
-Nx = 199
-Ny = 99
+Nx = 128
+Ny = 64
 Nz = Ny
 
 def main():
@@ -93,7 +93,7 @@ def main():
         # Set IB to True and add 1 patch
         'ib'                           : 'T',
         'num_ibs'                      : 1,
-      	'viscous'		       : 'T',
+      	'viscous'		               : 'T',
         # ==========================================================================
 
         # Formatted Database Files Structure Parameters ============================

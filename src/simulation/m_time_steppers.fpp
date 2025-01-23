@@ -76,8 +76,8 @@ module m_time_steppers
 
     ! drag calculation variables 
     type(scalar_field), allocatable, dimension(:) :: rhs_rhouu
-
     type(vector_field), allocatable, dimension(:) :: du_dxyz ! dudx, dudy, dudz 
+    real(wp), allocatable, dimension(:) :: F_D_vi
 
     ! periodic forcing variables
     type(scalar_field), allocatable, dimension(:) :: q_bar
@@ -322,6 +322,8 @@ contains
             end do
             @:ACC_SETUP_VFs(du_dxyz(i))
         end do
+
+        @:ALLOCATE(F_D_vi(num_ibs))
 
         ! allocating periodic forcing variables
         @:ALLOCATE(q_bar(1:5))
@@ -951,28 +953,34 @@ contains
     subroutine s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         type(scalar_field), dimension(sys_size), intent(in) :: rhs_rhouu
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
-        real(wp), dimension(1:num_ibs) :: F_D, F_D_global
+        real(wp), dimension(1:num_ibs) :: F_D_global
         real(wp) :: C_D
         integer :: i, j, k
 
         ! initialize F_D to zero
-        F_D = 0
+        !$acc parallel loop gang vector default(present)
+        do i = 1, num_ibs
+            F_D_vi(i) = 0.0
+        end do
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) /= 0) then 
                         
-                        F_D(ib_markers%sf(i, j, k)) = F_D(ib_markers%sf(i, j, k)) + rhs_rhouu(2)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
+                        F_D_vi(ib_markers%sf(i, j, k)) = F_D_vi(ib_markers%sf(i, j, k)) + rhs_rhouu(2)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
                     
                     end if
                 end do 
             end do 
         end do
 
+        !$acc update host(F_D_vi, q_prim_vf(1)%sf, q_prim_vf(2)%sf)
+
         ! reduce drag force to one value
         do i = 1, num_ibs
-            call s_mpi_allreduce_sum(F_D(i), F_D_global(i))
+            call s_mpi_allreduce_sum(F_D_vi(i), F_D_global(i))
         end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
@@ -998,7 +1006,7 @@ contains
         integer :: i, j, k, l, q, i_ibs, i_sphere_markers
 
         mu_visc = 0.05558135178876695
-        
+
         do i_ibs = 1, num_ibs
             print *, 'ib # ', i_ibs, F_D(i_ibs)
             print *, 'number of markers on ib ', num_sphere_markers(i_ibs)
@@ -1720,6 +1728,8 @@ contains
             @:DEALLOCATE(q_bar(i)%sf)
         end do
         @:DEALLOCATE(q_bar)
+
+        @:DEALLOCATE(F_D_vi)
         
         do i = 1, 8
             @:DEALLOCATE(q_periodic_force(i)%sf)
