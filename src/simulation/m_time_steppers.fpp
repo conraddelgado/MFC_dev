@@ -707,7 +707,7 @@ contains
         call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
         if (t_step > 0) then
-            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+            !call s_add_periodic_forcing(rhs_vf, q_periodic_force)
         end if
 
         if (run_time_info) then
@@ -997,6 +997,8 @@ contains
                 end do 
             end do 
         end do
+
+        !$acc update host(F_D_vi, q_prim_vf(1)%sf, q_prim_vf(2)%sf)
 
         ! reduce drag force to one value
         do i = 1, num_ibs
