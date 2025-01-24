@@ -694,8 +694,8 @@ contains
         end if
 
         if (t_step > 0) then
-            call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
-            call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+            !call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+            !call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
         end if
 
         print *, 'period: ', q_periodic_force(1)%sf(1, 1, 1)
