@@ -1030,7 +1030,6 @@ contains
             F_D_si(i) = 0._wp
         end do
 
-        !$acc parallel loop
         do i_ibs = 1, num_ibs
             do i_sphere_markers = 1, num_sphere_markers(i_ibs)
 
