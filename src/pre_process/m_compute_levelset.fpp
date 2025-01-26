@@ -470,9 +470,13 @@ contains
         type(levelset_norm_field), intent(INOUT) :: levelset_norm
         integer, intent(IN) :: ib_patch_id
 
-        real(wp) :: radius, dist
+        real(wp) :: radius, dist, dist_min
         real(wp) :: x_centroid, y_centroid, z_centroid
+        real(wp) :: x_domain_beg, x_domain_end, y_domain_beg, y_domain_end, z_domain_beg, z_domain_end
+        real(wp) :: x_pcen, y_pcen, z_pcen ! periodically projected centroids of sphere
         real(wp), dimension(3) :: dist_vec
+        real(wp), dimension(7, 3) :: dist_vec_per
+        real(wp), dimension(7) :: dist_per
 
         integer :: i, j, k !< Loop index variables
 
@@ -481,6 +485,35 @@ contains
         y_centroid = patch_ib(ib_patch_id)%y_centroid
         z_centroid = patch_ib(ib_patch_id)%z_centroid
 
+        call s_mpi_allreduce_min(x_domain%beg, x_domain_beg)
+        call s_mpi_allreduce_max(x_domain%end, x_domain_end)
+        call s_mpi_allreduce_min(y_domain%beg, y_domain_beg)
+        call s_mpi_allreduce_max(y_domain%end, y_domain_end)
+        call s_mpi_allreduce_min(z_domain%beg, z_domain_beg)
+        call s_mpi_allreduce_max(z_domain%end, z_domain_end)
+
+        if ((x_centroid - x_domain_beg) <= radius) then
+            x_pcen = x_domain_end + (x_centroid - x_domain_beg)
+        else if ((x_domain_end - x_centroid) <= radius) then 
+            x_pcen = x_domain_beg - (x_domain_end - x_centroid)
+        else 
+            x_pcen = x_centroid
+        end if
+        if ((y_centroid - y_domain_beg) <= radius) then
+            y_pcen = y_domain_end + (y_centroid - y_domain_beg)
+        else if ((y_domain_end - y_centroid) <= radius) then 
+            y_pcen = y_domain_beg - (y_domain_end - y_centroid)
+        else 
+            y_pcen = y_centroid
+        end if
+        if ((z_centroid - z_domain_beg) <= radius) then
+            z_pcen = z_domain_end + (z_centroid - z_domain_beg)
+        else if ((z_domain_end - z_centroid) <= radius) then 
+            z_pcen = z_domain_beg - (z_domain_end - z_centroid)
+        else 
+            z_pcen = z_centroid
+        end if
+
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -488,6 +521,46 @@ contains
                     dist_vec(2) = y_cc(j) - y_centroid
                     dist_vec(3) = z_cc(k) - z_centroid
                     dist = sqrt(sum(dist_vec**2))
+
+                    ! all permutations of periodically projected ib
+                    dist_vec_per(1, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(1, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(1, 3) = z_cc(k) - z_pcen
+                    dist_per(1) = sqrt(sum(dist_vec_per(1, :)**2))
+
+                    dist_vec_per(2, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(2, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(2, 3) = z_cc(k) - z_pcen
+                    dist_per(2) = sqrt(sum(dist_vec_per(2, :)**2))
+
+                    dist_vec_per(3, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(3, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(3, 3) = z_cc(k) - z_centroid
+                    dist_per(3) = sqrt(sum(dist_vec_per(3, :)**2))
+
+                    dist_vec_per(4, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(4, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(4, 3) = z_cc(k) - z_centroid
+                    dist_per(4) = sqrt(sum(dist_vec_per(4, :)**2))
+
+                    dist_vec_per(5, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(5, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(5, 3) = z_cc(k) - z_pcen
+                    dist_per(5) = sqrt(sum(dist_vec_per(5, :)**2))
+
+                    dist_vec_per(6, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(6, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(6, 3) = z_cc(k) - z_centroid
+                    dist_per(6) = sqrt(sum(dist_vec_per(6, :)**2))
+
+                    dist_vec_per(7, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(7, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(7, 3) = z_cc(k) - z_pcen
+                    dist_per(7) = sqrt(sum(dist_vec_per(7, :)**2))
+
+                    dist_min = min(dist, dist_per(1), dist_per(2), dist_per(3), dist_per(4), dist_per(5), dist_per(6), dist_per(7))
+                    dist = dist_min
+
                     levelset%sf(i, j, k, ib_patch_id) = dist - radius
                     if (dist == 0) then
                         levelset_norm%sf(i, j, k, ib_patch_id, :) = (/1, 0, 0/)

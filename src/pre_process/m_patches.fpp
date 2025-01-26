@@ -1563,7 +1563,7 @@ contains
 
         ! Generic loop iterators
         integer :: i, j, k !< generic loop iterators
-        real(wp) :: radius
+        real(wp) :: radius, x_per, y_per, z_per, x_domain_beg, x_domain_end, y_domain_beg, y_domain_end, z_domain_beg, z_domain_end
 
         real(wp) :: radius_pressure, pressure_bubble, pressure_inf !<
             !! Variables to initialize the pressure field that corresponds to the
@@ -1594,6 +1594,14 @@ contains
         ! and verifying whether the current patch has permission to write to
         ! that cell. If both queries check out, the primitive variables of
         ! the current patch are assigned to this cell.
+
+        call s_mpi_allreduce_min(x_domain%beg, x_domain_beg)
+        call s_mpi_allreduce_max(x_domain%end, x_domain_end)
+        call s_mpi_allreduce_min(y_domain%beg, y_domain_beg)
+        call s_mpi_allreduce_max(y_domain%end, y_domain_end)
+        call s_mpi_allreduce_min(z_domain%beg, z_domain_beg)
+        call s_mpi_allreduce_max(z_domain%end, z_domain_end)
+
         do k = 0, p
             do j = 0, n
                 do i = 0, m
@@ -1632,6 +1640,62 @@ contains
                             end if
                         end if
                     end if
+
+                    ! periodic ib
+                    if ((x_cc(i) - x_domain_beg) <= 2*radius) then 
+                        x_per = x_domain_end - (x_cc(i) - x_domain_beg)
+                    else if ((x_domain_end - x_cc(i)) <= radius) then 
+                        x_per = x_domain_beg + (x_domain_end - x_cc(i))
+                    else
+                        x_per = x_cc(i)
+                    end if
+
+                    if ((cart_y - y_domain_beg) <= 2*radius) then 
+                        y_per = y_domain_end - (cart_y - y_domain_beg)
+                    else if ((y_domain_end - cart_y) <= radius) then 
+                        y_per = y_domain_beg + (y_domain_end - cart_y)
+                    else
+                        y_per = cart_y
+                    end if
+
+                    if ((cart_z - z_domain_beg) <= 2*radius) then 
+                        z_per = z_domain_end - (cart_z - z_domain_beg)
+                    else if ((z_domain_end - cart_z) <= 2*radius) then 
+                        z_per = z_domain_beg + (z_domain_end - cart_z)
+                    else
+                        z_per = cart_z
+                    end if
+
+                    ! check every permutation of the projected cell location
+                    if (((x_per - x_centroid)**2 &
+                        + (y_per - y_centroid)**2 &
+                        + (z_per - z_centroid)**2 <= radius**2) &
+                        .or. ((x_per - x_centroid)**2 &
+                        + (cart_y - y_centroid)**2 &
+                        + (z_per - z_centroid)**2 <= radius**2) &
+                        .or. ((x_per - x_centroid)**2 &
+                        + (y_per - y_centroid)**2 &
+                        + (cart_z - z_centroid)**2 <= radius**2) &
+                        .or. ((x_per - x_centroid)**2 &
+                        + (cart_y - y_centroid)**2 &
+                        + (cart_z - z_centroid)**2 <= radius**2) & 
+                        .or. ((x_cc(i) - x_centroid)**2 &
+                        + (y_per - y_centroid)**2 &
+                        + (z_per - z_centroid)**2 <= radius**2) &
+                        .or. ((x_cc(i) - x_centroid)**2 &
+                        + (y_per - y_centroid)**2 &
+                        + (cart_z - z_centroid)**2 <= radius**2) &
+                        .or. ((x_cc(i) - x_centroid)**2 &
+                        + (cart_y - y_centroid)**2 &
+                        + (z_per - z_centroid)**2 <= radius**2)) &
+                        then
+
+                        if (present(ib)) then
+                            ! Updating the patch identities bookkeeping variable
+                            patch_id_fp(i, j, k) = patch_id
+                        end if
+                    end if
+                    ! end periodic ib
 
                 end do
             end do
