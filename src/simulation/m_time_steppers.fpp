@@ -87,12 +87,12 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: q_bar
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
     real(wp), allocatable, dimension(:) :: q_spatial_avg, q_spatial_avg_glb
-    real(wp) :: N_x_total, N_x_total_glb, volfrac_phi
+    real(wp) :: N_x_total, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
-    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total, N_x_total_glb, volfrac_phi)
+    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf)
 
 contains
 
@@ -357,6 +357,11 @@ contains
         
         @:ALLOCATE(q_spatial_avg(1:6))
         @:ALLOCATE(q_spatial_avg_glb(1:6))
+
+        rho_inf = 1.225
+        u_inf = 680.6
+        T_inf = 288.2
+        !$acc update device(rho_inf, u_inf, T_inf)
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -694,10 +699,11 @@ contains
         end if
 
         if (t_step > 0) then
-            !call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
-            !call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+            call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+            call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
         end if
 
+        !$acc update host(q_periodic_force(1)%sf)
         print *, 'period: ', q_periodic_force(1)%sf(1, 1, 1)
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
@@ -1027,9 +1033,14 @@ contains
 
         mu_visc = 0.05558135178876695
 
-        !$acc parallel loop gang vector default(present)
         do i = 1, num_ibs
             F_D_si(i) = 0._wp
+        end do
+
+        do i = 1, 3
+            do j = 1, 3
+                !$acc update host(du_dxyz(i)%vf(j)%sf)
+            end do
         end do
 
         do i_ibs = 1, num_ibs
@@ -1185,6 +1196,8 @@ contains
             call s_mpi_allreduce_sum(F_D_si(i), F_D_global(i))
         end do
         
+        !$acc update host(q_prim_vf(1)%sf, q_prim_vf(2)%sf)
+
         C_D = -F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (si): ', C_D
@@ -1210,7 +1223,7 @@ contains
         !$acc update device(volfrac_phi)
 
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
-        !$acc update device(N_x_total)
+        
         call s_mpi_allreduce_sum(N_x_total, N_x_total_glb)
         !$acc update device(N_x_total_glb)
 
@@ -1237,6 +1250,8 @@ contains
             end do
         end do
 
+        !$acc update host(q_spatial_avg)
+
         call s_mpi_allreduce_sum(q_spatial_avg(4), q_spatial_avg_glb(4))
         call s_mpi_allreduce_sum(q_spatial_avg(6), q_spatial_avg_glb(6))
         call s_mpi_allreduce_sum(q_spatial_avg(1), q_spatial_avg_glb(1))
@@ -1246,7 +1261,6 @@ contains
         q_spatial_avg_glb(4) = q_spatial_avg_glb(4) / N_x_total_glb
         q_spatial_avg_glb(6) = q_spatial_avg_glb(6) / N_x_total_glb
         q_spatial_avg_glb(5) = q_spatial_avg_glb(6) / (q_spatial_avg_glb(4) * R)
-        print *, 'T', q_spatial_avg_glb(5)
         q_spatial_avg_glb(1) = q_spatial_avg_glb(1) / N_x_total_glb
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
@@ -1281,13 +1295,7 @@ contains
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar
         type(scalar_field), dimension(1:8), intent(inout) :: q_periodic_force
 
-        real(wp) :: rho_inf, u_inf, T_inf
         integer :: i, j, k, l
-
-        rho_inf = 1.225
-        u_inf = 680.6
-        T_inf = 288.2
-        !$acc enter data copyin(rho_inf, u_inf, T_inf)
 
         !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
