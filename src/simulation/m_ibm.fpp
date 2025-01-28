@@ -137,7 +137,7 @@ contains
         call s_find_sphere_markers_loc()
         !$acc update device(sphere_markers_loc)
 
-        call s_readwrite_sphere_surface_data()
+        !call s_readwrite_sphere_surface_data()
         !$acc update device(data_plane_area)
 
 

@@ -10,7 +10,7 @@ D = 0.1
 P = 101325 # Pa
 rho = 1.225 # kg/m^3
 
-M = 2.0
+M = 1.2
 Re = 1500.0
 v1 = M*(gam_a*P/rho)**(1.0/2.0)
 
@@ -22,14 +22,14 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 1.0E-06
-Nt = 10
+Nt = 8
 
 Nx = 128
 Ny = Nx
 Nz = Ny
 
 # load initial sphere locations
-sphere_loc = np.loadtxt('../../voronoi/sphere_array_locations.txt')
+sphere_loc = np.loadtxt('sphere_array_locations.txt')
 N_sphere = len(sphere_loc)
 
 # immersed boundary dictionary

@@ -359,7 +359,7 @@ contains
         @:ALLOCATE(q_spatial_avg_glb(1:6))
 
         rho_inf = 1.225
-        u_inf = 680.6
+        u_inf = 340.29399054347107
         T_inf = 288.2
         !$acc update device(rho_inf, u_inf, T_inf)
 
@@ -703,17 +703,14 @@ contains
             call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
         end if
 
-        !$acc update host(q_periodic_force(1)%sf)
-        print *, 'period: ', q_periodic_force(1)%sf(1, 1, 1)
-
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
         
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
-        call s_compute_dragforce_si(q_prim_vf, du_dxyz)
+        !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
         if (t_step > 0) then
-            !call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
         end if
 
         if (run_time_info) then
@@ -1004,7 +1001,7 @@ contains
             end do 
         end do
 
-        !$acc update host(F_D_vi, q_prim_vf(1)%sf, q_prim_vf(2)%sf)
+        !$acc update host(F_D_vi)
 
         ! reduce drag force to one value
         do i = 1, num_ibs
@@ -1012,7 +1009,7 @@ contains
         end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
-        C_D = F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
         open(unit=102, file='FD_vi.txt', status='old', position='append')
@@ -1031,7 +1028,7 @@ contains
     
         integer :: i, j, k, l, q, i_ibs, i_sphere_markers
 
-        mu_visc = 0.05558135178876695
+        mu_visc = 0.03334881107326017 ! M=1.2, Re=1500
 
         do i = 1, num_ibs
             F_D_si(i) = 0._wp
@@ -1042,6 +1039,8 @@ contains
                 !$acc update host(du_dxyz(i)%vf(j)%sf)
             end do
         end do
+
+        !$acc update host(q_prim_vf(5)%sf)
 
         do i_ibs = 1, num_ibs
             do i_sphere_markers = 1, num_sphere_markers(i_ibs)
@@ -1195,10 +1194,8 @@ contains
         do i = 1, num_ibs
             call s_mpi_allreduce_sum(F_D_si(i), F_D_global(i))
         end do
-        
-        !$acc update host(q_prim_vf(1)%sf, q_prim_vf(2)%sf)
 
-        C_D = -F_D_global(1) / (0.5 * q_prim_vf(1)%sf(1, 1, 1) * (q_prim_vf(2)%sf(1, 1, 1)**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = -F_D_global(4) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (si): ', C_D
 

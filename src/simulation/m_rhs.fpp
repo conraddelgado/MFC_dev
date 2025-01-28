@@ -698,9 +698,9 @@ contains
         ! drag calculation spatial velocity derivatives
         !$acc parallel loop collapse(4) gang vector default(present)
         do l = 1, 3
-            do i = 0, m
-                do j = 0, n
-                    do k = 0, p
+            do i = idwbuff(1)%beg, idwbuff(1)%end
+                do j = idwbuff(2)%beg, idwbuff(2)%end
+                    do k = idwbuff(3)%beg, idwbuff(3)%end
                         du_dxyz(l)%vf(1)%sf(i, j, k) = dq_prim_dx_qp(1)%vf(l+1)%sf(i, j, k) ! dudx
                         du_dxyz(l)%vf(2)%sf(i, j, k) = dq_prim_dy_qp(1)%vf(l+1)%sf(i, j, k) ! dudy
                         du_dxyz(l)%vf(3)%sf(i, j, k) = dq_prim_dz_qp(1)%vf(l+1)%sf(i, j, k) ! dudz

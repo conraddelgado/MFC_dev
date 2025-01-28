@@ -51,7 +51,7 @@ if (__name__ == '__main__'):
     print('running 3D...')
 
     # setup 
-    phi = 0.05
+    phi = 0.1
     D = 0.1
     L = 10*D
 
@@ -67,7 +67,7 @@ if (__name__ == '__main__'):
     
     relaxed_points = lloyd_relaxation_3d(initial_points, box)
 
-    np.savetxt('sphere_array_locations.txt', relaxed_points)
+    np.savetxt('../examples/3d_ibm_arraysphere/sphere_array_locations.txt', relaxed_points)
 
     fig = plt.figure(figsize=(10,5))
     ax1 = fig.add_subplot(121, projection='3d')

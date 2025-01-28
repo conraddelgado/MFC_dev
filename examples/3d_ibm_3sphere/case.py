@@ -1,5 +1,6 @@
 import json
 import math
+import numpy as np 
 
 Mu = 1.84e-05
 gam_a = 1.4
@@ -9,18 +10,21 @@ D = 0.1
 P = 101325 # Pa
 rho = 1.225 # kg/m^3
 
-M = 2.0
+M = 1.2
 Re = 1500.0
 v1 = M*(gam_a*P/rho)**(1.0/2.0)
 
 mu = rho*v1*D/Re # dynamic viscosity for current case
 
-#print('mu: ', mu)
-#print('v1: ', v1)
-#print('rho: ', rho)
-#print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
+# print('mu: ', mu)
+# print('v1: ', v1)
+# print('rho: ', rho)
+# print('T: ', P/rho/287)
+# print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-Nx = 256
+Nt = 100
+
+Nx = 128
 Ny = Nx
 Nz = Ny
 
@@ -46,8 +50,8 @@ print(
             "p": Nz,
             "dt": 1.0e-6,
             "t_step_start": 0,
-            "t_step_stop": 10000,  # 3000
-            "t_step_save": 100,  # 10
+            "t_step_stop": Nt,  # 3000
+            "t_step_save": 1,  # 10
             # Simulation Algorithm Parameters
             # Only one patches are necessary, the air tube
             "num_patches": 1,
@@ -84,7 +88,7 @@ print(
             "bc_z%end": -1,
             # Set IB to True and add 1 patch
             "ib": "T",
-            "num_ibs": 3,
+            "num_ibs": 8,
             "viscous": "T",
             # Formatted Database Files Structure Parameters
             "format": 1,
@@ -130,6 +134,41 @@ print(
             "patch_ib(3)%z_centroid": 0.0,
             "patch_ib(3)%radius": D / 2,
             "patch_ib(3)%slip": "F",
+
+            "patch_ib(4)%geometry": 8,
+            "patch_ib(4)%x_centroid": 0.45,
+            "patch_ib(4)%y_centroid": 0.45,
+            "patch_ib(4)%z_centroid": 0.0,
+            "patch_ib(4)%radius": D / 2,
+            "patch_ib(4)%slip": "F",
+
+            "patch_ib(5)%geometry": 8,
+            "patch_ib(5)%x_centroid": 0.465,
+            "patch_ib(5)%y_centroid": 0.465,
+            "patch_ib(5)%z_centroid": 0.465,
+            "patch_ib(5)%radius": D / 2,
+            "patch_ib(5)%slip": "F",
+
+            "patch_ib(6)%geometry": 8,
+            "patch_ib(6)%x_centroid": 0.44,
+            "patch_ib(6)%y_centroid": 0.0,
+            "patch_ib(6)%z_centroid": 0.44,
+            "patch_ib(6)%radius": D / 2,
+            "patch_ib(6)%slip": "F",
+
+            "patch_ib(7)%geometry": 8,
+            "patch_ib(7)%x_centroid": 0.0,
+            "patch_ib(7)%y_centroid": 0.0,
+            "patch_ib(7)%z_centroid": -0.4,
+            "patch_ib(7)%radius": D / 2,
+            "patch_ib(7)%slip": "F",
+
+            "patch_ib(8)%geometry": 8,
+            "patch_ib(8)%x_centroid": 0.0,
+            "patch_ib(8)%y_centroid": -0.3,
+            "patch_ib(8)%z_centroid": -0.25,
+            "patch_ib(8)%radius": D / 2,
+            "patch_ib(8)%slip": "F",
             # Fluids Physical Parameters
             "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
             "fluid_pp(1)%pi_inf": 0,
