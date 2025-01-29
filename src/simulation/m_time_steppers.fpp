@@ -359,9 +359,8 @@ contains
         @:ALLOCATE(q_spatial_avg_glb(1:6))
 
         rho_inf = 1.225
-        u_inf = 340.29399054347107
         T_inf = 288.2
-        !$acc update device(rho_inf, u_inf, T_inf)
+        !$acc update device(rho_inf, T_inf)
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -699,8 +698,8 @@ contains
         end if
 
         if (t_step > 0) then
-            call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
-            call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+            !call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+            !call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
         end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
@@ -710,7 +709,7 @@ contains
         !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
         if (t_step > 0) then
-            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+            !call s_add_periodic_forcing(rhs_vf, q_periodic_force)
         end if
 
         if (run_time_info) then
@@ -1217,6 +1216,7 @@ contains
         R = 287.0 ! gas constant air
 
         volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+        print *, 'volfrac:', volfrac_phi
         !$acc update device(volfrac_phi)
 
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
@@ -1262,24 +1262,24 @@ contains
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
-        !$acc update device(q_spatial_avg_glb)
+        u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
+
+        !$acc update device(q_spatial_avg_glb, u_inf)
 
         ! time average
         !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m 
             do j = 0, n
                 do k = 0, p 
-                    if (ib_markers%sf(i, j, k) == 0) then
-                        ! rho*u bar
-                        q_bar(1)%sf(i, j, k) = ( (q_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        q_bar(2)%sf(i, j, k) = ( (q_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        q_bar(3)%sf(i, j, k) = ( (q_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        
-                        ! rho bar
-                        q_bar(4)%sf(i, j, k) = ( (q_spatial_avg_glb(4) + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                        ! T bar
-                        q_bar(5)%sf(i, j, k) = ( (q_spatial_avg_glb(5) + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                    end if
+                    ! rho*u bar
+                    q_bar(1)%sf(i, j, k) = ( (q_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    q_bar(2)%sf(i, j, k) = ( (q_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    q_bar(3)%sf(i, j, k) = ( (q_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    
+                    ! rho bar
+                    q_bar(4)%sf(i, j, k) = ( (q_spatial_avg_glb(4) + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    ! T bar
+                    q_bar(5)%sf(i, j, k) = ( (q_spatial_avg_glb(5) + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
                 end do 
             end do 
         end do

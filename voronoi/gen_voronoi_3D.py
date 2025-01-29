@@ -65,7 +65,7 @@ if (__name__ == '__main__'):
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
     box = freud.box.Box.cube(L)
     
-    relaxed_points = lloyd_relaxation_3d(initial_points, box)
+    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=20)
 
     np.savetxt('../examples/3d_ibm_arraysphere/sphere_array_locations.txt', relaxed_points)
 

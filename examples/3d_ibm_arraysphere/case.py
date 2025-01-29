@@ -22,9 +22,9 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 1.0E-06
-Nt = 8
+Nt = 20000
 
-Nx = 128
+Nx = 256
 Ny = Nx
 Nz = Ny
 
@@ -62,7 +62,7 @@ case_dict = {
     "m": Nx,
     "n": Ny,
     "p": Nz,
-    "dt": 1.0e-6,
+    "dt": dt,
     "t_step_start": 0,
     "t_step_stop": Nt,  # 3000
     "t_step_save": 1,  # 10
@@ -84,7 +84,7 @@ case_dict = {
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
     "weno_order": 5,
-    "weno_eps": 1.0e-16,
+    "weno_eps": 1.0e-14,
     "weno_Re_flux": "T",
     "weno_avg": "T",
     "avg_state": 2,
@@ -92,6 +92,7 @@ case_dict = {
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
+    "low_Mach": 1,
     "wave_speeds": 1,
     # periodic bc
     "bc_x%beg": -1,
