@@ -355,8 +355,8 @@ contains
             @:ACC_SETUP_SFs(q_periodic_force(i))
         end do 
         
-        @:ALLOCATE(q_spatial_avg(1:6))
-        @:ALLOCATE(q_spatial_avg_glb(1:6))
+        @:ALLOCATE(q_spatial_avg(1:5))
+        @:ALLOCATE(q_spatial_avg_glb(1:5))
 
         rho_inf = 1.225
         T_inf = 288.2
@@ -697,10 +697,10 @@ contains
             call nvtxStartRange("TIMESTEP")
         end if
 
-        if (t_step > 0) then
-            !call s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
-            !call s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
-        end if
+        !if (t_step > 0) then
+        call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
+        call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
+        !end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
@@ -709,7 +709,7 @@ contains
         !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
         if (t_step > 0) then
-            !call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
         end if
 
         if (run_time_info) then
@@ -1008,7 +1008,7 @@ contains
         end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
-        C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = F_D_global(1) / (0.5 * rho_inf * (408.35**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
         open(unit=102, file='FD_vi.txt', status='old', position='append')
@@ -1205,18 +1205,16 @@ contains
     end subroutine s_compute_dragforce_si 
 
     ! computes the phase average (time and space) of rho*u, rho, and T
-    subroutine s_compute_phase_average(q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+    subroutine s_compute_phase_average(q_cons_vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
+        type(scalar_field), intent(inout) :: q_T_sf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
-        real(wp), dimension(1:6), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T, 6 P
-        real(wp), dimension(1:6), intent(inout) :: q_spatial_avg_glb
-        real(wp) :: R
+        real(wp), dimension(1:5), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T
+        real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
         integer :: i, j, k, t_step
 
-        R = 287.0 ! gas constant air
-
         volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
-        print *, 'volfrac:', volfrac_phi
         !$acc update device(volfrac_phi)
 
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
@@ -1226,7 +1224,7 @@ contains
 
         ! initialize
         !$acc parallel loop gang vector default(present)
-        do i = 1, 6
+        do i = 1, 5
             q_spatial_avg(i) = 0._wp
         end do
 
@@ -1236,12 +1234,12 @@ contains
             do j = 0, n 
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
-                        q_spatial_avg(4) = q_spatial_avg(4) + q_prim_vf(1)%sf(i, j, k)
-                        q_spatial_avg(6) = q_spatial_avg(6) + q_prim_vf(5)%sf(i, j, k)
+                        q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
+                        q_spatial_avg(5) = q_spatial_avg(5) + 288.0
 
-                        q_spatial_avg(1) = q_spatial_avg(1) + q_prim_vf(2)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
-                        q_spatial_avg(2) = q_spatial_avg(2) + q_prim_vf(3)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
-                        q_spatial_avg(3) = q_spatial_avg(3) + q_prim_vf(4)%sf(i, j, k) * q_prim_vf(1)%sf(i, j, k)
+                        q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
+                        q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
+                        q_spatial_avg(3) = q_spatial_avg(3) + q_cons_vf(4)%sf(i, j, k) 
                     end if
                 end do
             end do
@@ -1250,19 +1248,21 @@ contains
         !$acc update host(q_spatial_avg)
 
         call s_mpi_allreduce_sum(q_spatial_avg(4), q_spatial_avg_glb(4))
-        call s_mpi_allreduce_sum(q_spatial_avg(6), q_spatial_avg_glb(6))
+        call s_mpi_allreduce_sum(q_spatial_avg(5), q_spatial_avg_glb(5))
         call s_mpi_allreduce_sum(q_spatial_avg(1), q_spatial_avg_glb(1))
         call s_mpi_allreduce_sum(q_spatial_avg(2), q_spatial_avg_glb(2))
         call s_mpi_allreduce_sum(q_spatial_avg(3), q_spatial_avg_glb(3))
 
         q_spatial_avg_glb(4) = q_spatial_avg_glb(4) / N_x_total_glb
-        q_spatial_avg_glb(6) = q_spatial_avg_glb(6) / N_x_total_glb
-        q_spatial_avg_glb(5) = q_spatial_avg_glb(6) / (q_spatial_avg_glb(4) * R)
+        q_spatial_avg_glb(5) = q_spatial_avg_glb(5) / N_x_total_glb
         q_spatial_avg_glb(1) = q_spatial_avg_glb(1) / N_x_total_glb
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
+        print *, 'tstep', t_step, q_spatial_avg_glb(1) / q_spatial_avg_glb(4), q_prim_vf(1)%sf(1,1,1), q_prim_vf(2)%sf(1,1,1)
         u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
+        print *, u_inf
+        !u_inf = 408.35
 
         !$acc update device(q_spatial_avg_glb, u_inf)
 
@@ -1287,7 +1287,9 @@ contains
     end subroutine s_compute_phase_average
 
     ! computes the periodic forcing terms described in Khalloufi and Capecelatro
-    subroutine s_compute_periodic_forcing(q_prim_vf, q_bar, q_periodic_force)
+    subroutine s_compute_periodic_forcing(q_cons_vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
+        type(scalar_field), intent(inout) :: q_T_sf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar
         type(scalar_field), dimension(1:8), intent(inout) :: q_periodic_force
@@ -1317,6 +1319,9 @@ contains
             end do
         end do
 
+        print *, 'mom', rho_inf*u_inf, q_bar(1)%sf(1,1,1)
+        print *, 'continuity: ', q_periodic_force(7)%sf(1,1,1), 'xmom: ', q_periodic_force(1)%sf(1,1,1), 'energy:', q_periodic_force(4)%sf(1,1,1), q_periodic_force(8)%sf(1,1,1) 
+
     end subroutine s_compute_periodic_forcing
 
     ! adds periodic forcing terms to RHS, as detailed in Khalloufi and Capecelatro
@@ -1330,11 +1335,11 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    if (ib_markers%sf(i, j, k) == 0) then
-                        rhs_vf(1)%sf(i, j, k) = rhs_vf(1)%sf(i, j, k) + q_periodic_force(7)%sf(i, j, k) ! continuity
-                        rhs_vf(2)%sf(i, j, k) = rhs_vf(2)%sf(i, j, k) + q_periodic_force(1)%sf(i, j, k) ! x momentum
-                        rhs_vf(5)%sf(i, j, k) = rhs_vf(5)%sf(i, j, k) + q_periodic_force(4)%sf(i, j, k) + q_periodic_force(8)%sf(i, j, k) ! energy
-                    end if 
+                    !if (ib_markers%sf(i, j, k) == 0) then
+                    rhs_vf(1)%sf(i, j, k) = rhs_vf(1)%sf(i, j, k) + q_periodic_force(7)%sf(i, j, k) ! continuity
+                    rhs_vf(2)%sf(i, j, k) = rhs_vf(2)%sf(i, j, k) + q_periodic_force(1)%sf(i, j, k) ! x momentum
+                    rhs_vf(5)%sf(i, j, k) = rhs_vf(5)%sf(i, j, k) + q_periodic_force(4)%sf(i, j, k) + q_periodic_force(8)%sf(i, j, k) ! energy
+                    !end if 
                 end do
             end do
         end do

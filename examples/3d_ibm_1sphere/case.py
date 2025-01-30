@@ -10,7 +10,7 @@ D = 0.1
 P = 101325 # Pa
 rho = 1.225 # kg/m^3
 
-M = 2.0
+M = 1.2
 Re = 1500.0
 v1 = M*(gam_a*P/rho)**(1.0/2.0)
 
@@ -21,11 +21,11 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1.0E-06
-Nt = 7500
+dt = 2.0E-06
+Nt = 24
 
-Nx = 128
-Ny = 64
+Nx = 99
+Ny = Nx
 Nz = Ny
 
 def main():
@@ -37,14 +37,14 @@ def main():
 
         # Computational Domain Parameters ==========================================
         # x direction
-        'x_domain%beg'                 : -5*D,
+        'x_domain%beg'                 : -5.0*D,
         'x_domain%end'                 : 5.0*D,
         # y direction
-        'y_domain%beg'                 : -2.5*D,
-        'y_domain%end'                 : 2.5*D,
+        'y_domain%beg'                 : -5.0*D,
+        'y_domain%end'                 : 5.0*D,
         # z direction
-        'z_domain%beg'                 : -2.5*D,
-        'z_domain%end'                 : 2.5*D,
+        'z_domain%beg'                 : -5.0*D,
+        'z_domain%end'                 : 5.0*D,
 
         'cyl_coord'                    : 'F',
         'm'                            : Nx,
@@ -53,7 +53,7 @@ def main():
         'dt'                           : dt,
         't_step_start'                 : 0,
         't_step_stop'                  : Nt,  
-        't_step_save'                  : 100,  
+        't_step_save'                  : 1,  
         # ==========================================================================
         
         # Simulation Algorithm Parameters ==========================================
@@ -84,12 +84,12 @@ def main():
         'riemann_solver'               : 2,
         'wave_speeds'                  : 1,
         # We use ghost-cell extrapolation
-        'bc_x%beg'                     : -3,
-        'bc_x%end'                     : -3,
-        'bc_y%beg'                     : -3,
-        'bc_y%end'                     : -3,
-        'bc_z%beg'                     : -3,
-        'bc_z%end'                     : -3,
+        'bc_x%beg'                     : -1,
+        'bc_x%end'                     : -1,
+        'bc_y%beg'                     : -1,
+        'bc_y%end'                     : -1,
+        'bc_z%beg'                     : -1,
+        'bc_z%end'                     : -1,
         # Set IB to True and add 1 patch
         'ib'                           : 'T',
         'num_ibs'                      : 1,
@@ -112,8 +112,8 @@ def main():
         'patch_icpp(1)%y_centroid'     : 0.0,
         'patch_icpp(1)%z_centroid'     : 0.0,
         'patch_icpp(1)%length_x'       : 10*D,
-        'patch_icpp(1)%length_y'       : 5*D,
-        'patch_icpp(1)%length_z'       : 5*D,
+        'patch_icpp(1)%length_y'       : 10*D,
+        'patch_icpp(1)%length_z'       : 10*D,
         # Specify the patch primitive variables 
         'patch_icpp(1)%vel(1)'         : v1,
         'patch_icpp(1)%vel(2)'         : 0.0E+00,
