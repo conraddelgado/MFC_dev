@@ -708,9 +708,9 @@ contains
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
-        if (t_step > 0) then
-            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        end if
+        !if (t_step > 0) then
+        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        !end if
 
         if (run_time_info) then
             call s_write_run_time_information(q_prim_vf, t_step)
@@ -802,9 +802,9 @@ contains
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
-        if (t_step > 0) then
-            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        end if
+        !if (t_step > 0) then
+        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        !end if
 
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=2)
@@ -883,9 +883,9 @@ contains
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
-        if (t_step > 0) then
-            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        end if
+        !if (t_step > 0) then
+        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        !end if
 
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=3)
@@ -1214,9 +1214,6 @@ contains
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
         integer :: i, j, k, t_step
 
-        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
-        !$acc update device(volfrac_phi)
-
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
         
         call s_mpi_allreduce_sum(N_x_total, N_x_total_glb)
@@ -1229,13 +1226,17 @@ contains
         end do
 
         ! spatial average
-        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(4), q_spatial_avg(6), q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3))
+        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(4), q_spatial_avg(5), q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3))
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
                         q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
-                        q_spatial_avg(5) = q_spatial_avg(5) + 288.0
+                        q_spatial_avg(5) = q_spatial_avg(5) + (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
+                                           - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
+                                           + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
+                                           + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) &
+                                           * (1.4 - 1)/287
 
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
@@ -1259,10 +1260,9 @@ contains
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
-        print *, 'tstep', t_step, q_spatial_avg_glb(1) / q_spatial_avg_glb(4), q_prim_vf(1)%sf(1,1,1), q_prim_vf(2)%sf(1,1,1)
         u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
-        print *, u_inf
-        !u_inf = 408.35
+        !print *, 'u_inf', u_inf
+        u_inf = 408.35
 
         !$acc update device(q_spatial_avg_glb, u_inf)
 
@@ -1272,17 +1272,19 @@ contains
             do j = 0, n
                 do k = 0, p 
                     ! rho*u bar
-                    q_bar(1)%sf(i, j, k) = ( (q_spatial_avg_glb(1) + (t_step - 1)*q_bar(1)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                    q_bar(2)%sf(i, j, k) = ( (q_spatial_avg_glb(2) + (t_step - 1)*q_bar(2)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
-                    q_bar(3)%sf(i, j, k) = ( (q_spatial_avg_glb(3) + (t_step - 1)*q_bar(3)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    q_bar(1)%sf(i, j, k) = ( (q_spatial_avg_glb(1) + (t_step - 1._wp)*q_bar(1)%sf(i, j, k)) / t_step ) 
+                    q_bar(2)%sf(i, j, k) = ( (q_spatial_avg_glb(2) + (t_step - 1._wp)*q_bar(2)%sf(i, j, k)) / t_step ) 
+                    q_bar(3)%sf(i, j, k) = ( (q_spatial_avg_glb(3) + (t_step - 1._wp)*q_bar(3)%sf(i, j, k)) / t_step ) 
                     
                     ! rho bar
-                    q_bar(4)%sf(i, j, k) = ( (q_spatial_avg_glb(4) + (t_step - 1)*q_bar(4)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    q_bar(4)%sf(i, j, k) = ( (q_spatial_avg_glb(4) + (t_step - 1._wp)*q_bar(4)%sf(i, j, k)) / t_step ) 
                     ! T bar
-                    q_bar(5)%sf(i, j, k) = ( (q_spatial_avg_glb(5) + (t_step - 1)*q_bar(5)%sf(i, j, k)) / t_step ) / (1._wp - volfrac_phi)
+                    q_bar(5)%sf(i, j, k) = ( (q_spatial_avg_glb(5) + (t_step - 1._wp)*q_bar(5)%sf(i, j, k)) / t_step ) 
                 end do 
             end do 
         end do
+
+        !print *, 'mom', rho_inf*u_inf, q_bar(1)%sf(1,1,1), q_spatial_avg_glb(1)
 
     end subroutine s_compute_phase_average
 
@@ -1296,31 +1298,33 @@ contains
 
         integer :: i, j, k, l
 
+        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+        !$acc update device(volfrac_phi)
+
         !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
                     ! f_u
-                    q_periodic_force(1)%sf(i, j, k) = (rho_inf*u_inf - q_bar(1)%sf(i, j, k)) / dt
-                    q_periodic_force(2)%sf(i, j, k) = (rho_inf*u_inf - q_bar(2)%sf(i, j, k)) / dt
-                    q_periodic_force(3)%sf(i, j, k) = (rho_inf*u_inf - q_bar(3)%sf(i, j, k)) / dt
+                    q_periodic_force(1)%sf(i, j, k) = (rho_inf*u_inf - q_bar(1)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(2)%sf(i, j, k) = (rho_inf*u_inf - q_bar(2)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(3)%sf(i, j, k) = (rho_inf*u_inf - q_bar(3)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
 
                     ! u*f_u
-                    q_periodic_force(4)%sf(i, j, k) = q_prim_vf(2)%sf(i, j, k) * q_periodic_force(1)%sf(i, j, k)
-                    q_periodic_force(5)%sf(i, j, k) = q_prim_vf(3)%sf(i, j, k) * q_periodic_force(2)%sf(i, j, k)
-                    q_periodic_force(6)%sf(i, j, k) = q_prim_vf(4)%sf(i, j, k) * q_periodic_force(3)%sf(i, j, k)
+                    q_periodic_force(4)%sf(i, j, k) = q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) * q_periodic_force(1)%sf(i, j, k)
+                    q_periodic_force(5)%sf(i, j, k) = q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) * q_periodic_force(2)%sf(i, j, k)
+                    q_periodic_force(6)%sf(i, j, k) = q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) * q_periodic_force(3)%sf(i, j, k)
 
                     ! f_rho
-                    q_periodic_force(7)%sf(i, j, k) = (rho_inf - q_bar(4)%sf(i, j, k)) / dt
+                    q_periodic_force(7)%sf(i, j, k) = (rho_inf - q_bar(4)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
 
                     ! f_T
-                    q_periodic_force(8)%sf(i, j, k) = (q_prim_vf(1)%sf(i, j, k) / 1.4) * (T_inf - q_bar(5)%sf(i, j, k)) / dt
+                    q_periodic_force(8)%sf(i, j, k) = (q_cons_vf(1)%sf(i, j, k) / 1.4) * (T_inf - q_bar(5)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
                 end do 
             end do
         end do
 
-        print *, 'mom', rho_inf*u_inf, q_bar(1)%sf(1,1,1)
-        print *, 'continuity: ', q_periodic_force(7)%sf(1,1,1), 'xmom: ', q_periodic_force(1)%sf(1,1,1), 'energy:', q_periodic_force(4)%sf(1,1,1), q_periodic_force(8)%sf(1,1,1) 
+        !print *, 'continuity: ', q_periodic_force(7)%sf(1,1,1), 'xmom: ', q_periodic_force(1)%sf(1,1,1), 'energy:', q_periodic_force(4)%sf(1,1,1), q_periodic_force(8)%sf(1,1,1) 
 
     end subroutine s_compute_periodic_forcing
 

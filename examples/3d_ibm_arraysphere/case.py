@@ -25,7 +25,7 @@ dt = 2.0E-06
 Nt = 7
 t_save = 1
 
-Nx = 127
+Nx = 63
 Ny = Nx
 Nz = Ny
 
