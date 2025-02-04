@@ -23,7 +23,7 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('T', P/(rho*287))
 
 dt = 2.0E-06
-Nt = 10
+Nt = 5000
 
 Nx = 63
 Ny = Nx
@@ -54,7 +54,7 @@ def main():
         'dt'                           : dt,
         't_step_start'                 : 0,
         't_step_stop'                  : Nt,  
-        't_step_save'                  : 1,  
+        't_step_save'                  : 100,  
         # ==========================================================================
         
         # Simulation Algorithm Parameters ==========================================

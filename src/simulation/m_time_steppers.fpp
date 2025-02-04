@@ -710,6 +710,7 @@ contains
 
         !if (t_step > 0) then
         call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        print *, 'forcing: ', q_periodic_force(1)%sf(10,10,10), q_periodic_force(4)%sf(10,10,10), q_periodic_force(7)%sf(10,10,10), q_periodic_force(8)%sf(10,10,10)
         !end if
 
         if (run_time_info) then
@@ -1212,6 +1213,7 @@ contains
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
+        real(wp) :: rho, inv_rho, u, v, w, E
         integer :: i, j, k, t_step
 
         N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
@@ -1226,21 +1228,23 @@ contains
         end do
 
         ! spatial average
-        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(4), q_spatial_avg(5), q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3))
+        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(1:5))
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
-                        q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
-                        q_spatial_avg(5) = q_spatial_avg(5) + (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
-                                           - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
-                                           + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
-                                           + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) &
-                                           * (1.4 - 1)/287
+                        rho    = q_cons_vf(1)%sf(i, j, k)
+                        inv_rho = 1.0_wp / rho
+                        u = q_cons_vf(2)%sf(i, j, k) * inv_rho
+                        v = q_cons_vf(3)%sf(i, j, k) * inv_rho
+                        w = q_cons_vf(4)%sf(i, j, k) * inv_rho
+                        E = q_cons_vf(5)%sf(i, j, k) * inv_rho
 
+                        q_spatial_avg(4) = q_spatial_avg(4) + rho
+                        q_spatial_avg(5) = q_spatial_avg(5) + (E - 0.5_wp * (u**2 + v**2 + w**2)) * (0.4_wp / 287._wp)
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
-                        q_spatial_avg(3) = q_spatial_avg(3) + q_cons_vf(4)%sf(i, j, k) 
+                        q_spatial_avg(3) = q_spatial_avg(3) + q_cons_vf(4)%sf(i, j, k)
                     end if
                 end do
             end do
@@ -1260,7 +1264,7 @@ contains
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
-        u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
+        !u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
         !print *, 'u_inf', u_inf
         u_inf = 408.35
 
@@ -1284,7 +1288,7 @@ contains
             end do 
         end do
 
-        !print *, 'mom', rho_inf*u_inf, q_bar(1)%sf(1,1,1), q_spatial_avg_glb(1)
+        print *, 'mom', rho_inf*u_inf, q_bar(1)%sf(1,1,1), q_spatial_avg_glb(1)
 
     end subroutine s_compute_phase_average
 
