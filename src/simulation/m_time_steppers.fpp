@@ -374,14 +374,14 @@ contains
         end if
 
         ! clear drag output file for use in m_time_steppers
-        open(unit=100, file='FD_vi.txt', status='unknown')
-        write(100, *)
+        open(unit=100, file='FD_vi.bin', status='replace', form='unformatted', access='stream')
+        write(100)
         close(100)
-        open(unit=101, file='FD_si.txt', status='unknown')
-        write(101, *)
+        open(unit=101, file='FD_si.bin', status='replace', form='unformatted', access='stream')
+        write(101)
         close(101)
-        open(unit=104, file='xmom_spatialavg.txt', status='unknown')
-        write(104, *)
+        open(unit=104, file='xmom_spatialavg.bin', status='replace', form='unformatted', access='stream')
+        write(104)
         close(104)
 
     end subroutine s_initialize_time_steppers_module
@@ -1016,8 +1016,8 @@ contains
         C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
-        open(unit=102, file='FD_vi.txt', status='old', position='append')
-        write(102, *) F_D_global
+        open(unit=102, file='FD_vi.bin', status='old', form='unformatted', access='stream', position='append')
+        write(102) F_D_global
         close(102)
 
     end subroutine s_compute_dragforce_vi
@@ -1203,8 +1203,8 @@ contains
 
         print *, 'C_D (si): ', C_D
 
-        open(unit=103, file='FD_si.txt', status='old', position='append')
-        write(103, *) F_D_global
+        open(unit=103, file='FD_si.bin', status='old', form='unformatted', access='stream', position='append')
+        write(103) F_D_global
         close(103)
 
     end subroutine s_compute_dragforce_si 
@@ -1226,7 +1226,7 @@ contains
         end do
 
         ! spatial average
-        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3), q_spatial_avg(4), q_spatial_avg(5))
+        !$acc parallel loop collapse(3) gang vector default(present_or_copyin) reduction(+:q_spatial_avg(1), q_spatial_avg(2), q_spatial_avg(3), q_spatial_avg(4), q_spatial_avg(5))
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
@@ -1261,8 +1261,8 @@ contains
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
         ! write the spatial avg of the x-mom 
-        open(unit=102, file='xmom_spatialavg.txt', status='old', position='append')
-        write(102, *) q_spatial_avg_glb(1)
+        open(unit=102, file='xmom_spatialavg.bin', status='old', form='unformatted', access='stream', position='append')
+        write(102) q_spatial_avg_glb(1)
         close(102)
 
         ! set reference quantities
