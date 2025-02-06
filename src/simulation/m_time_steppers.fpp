@@ -87,12 +87,12 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: q_bar
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
     real(wp), allocatable, dimension(:) :: q_spatial_avg, q_spatial_avg_glb
-    real(wp) :: N_x_total, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf
+    real(wp) :: N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
-    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf)
+    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf)
 
 contains
 
@@ -358,10 +358,11 @@ contains
         @:ALLOCATE(q_spatial_avg(1:5))
         @:ALLOCATE(q_spatial_avg_glb(1:5))
 
-        rho_inf = 1.225
-        T_inf = 288.2
-        u_inf = 408.35
-        !$acc update device(rho_inf, T_inf, u_inf)
+        N_x_total_glb = (m_glb + 1) * (n_glb + 1) * (p_glb + 1)
+        !$acc update device(N_x_total_glb)
+
+        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+        !$acc update device(volfrac_phi)
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -379,6 +380,9 @@ contains
         open(unit=101, file='FD_si.txt', status='unknown')
         write(101, *)
         close(101)
+        open(unit=104, file='xmom_spatialavg.txt', status='unknown')
+        write(104, *)
+        close(104)
 
     end subroutine s_initialize_time_steppers_module
 
@@ -1009,7 +1013,7 @@ contains
         end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
-        C_D = F_D_global(1) / (0.5 * rho_inf * (408.35**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
         open(unit=102, file='FD_vi.txt', status='old', position='append')
@@ -1215,11 +1219,6 @@ contains
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
         integer :: i, j, k, t_step
 
-        N_x_total = (m + 1) * (n + 1) * (p + 1) ! total number of cells
-        
-        call s_mpi_allreduce_sum(N_x_total, N_x_total_glb)
-        !$acc update device(N_x_total_glb)
-
         ! initialize
         !$acc parallel loop gang vector default(present)
         do i = 1, 5
@@ -1237,7 +1236,7 @@ contains
                                            - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) &
-                                           * (1.4 - 1)/287
+                                           * 1/fluid_pp(1)%gamma/287
 
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
@@ -1261,9 +1260,19 @@ contains
         q_spatial_avg_glb(2) = q_spatial_avg_glb(2) / N_x_total_glb
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
-        !u_inf = ((q_spatial_avg_glb(1) + (t_step - 1)*q_spatial_avg_glb(1))/t_step) / ((q_spatial_avg_glb(4) + (t_step - 1)*q_spatial_avg_glb(4))/t_step)
-        !print *, 'u_inf', u_inf
+        ! write the spatial avg of the x-mom 
+        open(unit=102, file='xmom_spatialavg.txt', status='old', position='append')
+        write(102, *) q_spatial_avg_glb(1)
+        close(102)
 
+        ! set reference quantities
+        if ((t_step - 1) == 0) then
+            u_inf = (q_spatial_avg_glb(1) / q_spatial_avg_glb(4)) / (1._wp - volfrac_phi)
+            rho_inf = q_spatial_avg_glb(4) / (1._wp - volfrac_phi)
+            T_inf = q_spatial_avg_glb(5) / (1._wp - volfrac_phi)
+            !$acc update device(u_inf, rho_inf, T_inf)
+        end if
+        
         !$acc update device(q_spatial_avg_glb(1), q_spatial_avg_glb(2), q_spatial_avg_glb(3), q_spatial_avg_glb(4), q_spatial_avg_glb(5))
 
         ! time average
@@ -1296,9 +1305,6 @@ contains
 
         integer :: i, j, k, l
 
-        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
-        !$acc update device(volfrac_phi)
-
         !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
@@ -1321,8 +1327,6 @@ contains
                 end do 
             end do
         end do
-
-        !print *, 'continuity: ', q_periodic_force(7)%sf(1,1,1), 'xmom: ', q_periodic_force(1)%sf(1,1,1), 'energy:', q_periodic_force(4)%sf(1,1,1), q_periodic_force(8)%sf(1,1,1) 
 
     end subroutine s_compute_periodic_forcing
 
