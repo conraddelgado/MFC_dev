@@ -374,12 +374,9 @@ contains
         end if
 
         ! clear drag output file for use in m_time_steppers
-        open(unit=100, file='FD_vi.bin', status='replace')
-        close(100)
-        open(unit=101, file='FD_si.bin', status='replace')
-        close(101)
-        open(unit=104, file='xmom_spatialavg.bin', status='replace')
-        close(104)
+        open(unit=100, file='FD_vi.bin', status='replace', form='unformatted', access='stream')
+        open(unit=101, file='FD_si.bin', status='replace', form='unformatted', access='stream')
+        open(unit=102, file='xmom_spatialavg.bin', status='replace', form='unformatted', access='stream')
 
     end subroutine s_initialize_time_steppers_module
 
@@ -980,7 +977,7 @@ contains
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         real(wp), dimension(1:num_ibs) :: F_D_global
         real(wp) :: C_D
-        integer :: i, j, k
+        integer :: i, j, k, pos
 
         ! initialize F_D to zero
         !$acc parallel loop gang vector default(present)
@@ -1013,9 +1010,7 @@ contains
         C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
         print *, 'C_D (vi): ', C_D
-        open(unit=102, file='FD_vi.bin', status='old', form='unformatted', access='stream', position='append')
-        write(102) F_D_global
-        close(102)
+        write(100) F_D_global  
 
     end subroutine s_compute_dragforce_vi
 
@@ -1027,7 +1022,7 @@ contains
 
         real(wp), dimension(1:num_ibs) :: F_D_global
     
-        integer :: i, j, k, l, q, i_ibs, i_sphere_markers
+        integer :: i, j, k, l, q, i_ibs, i_sphere_markers, pos
 
         mu_visc = 0.03334881107326017 ! M=1.2, Re=1500
 
@@ -1200,9 +1195,7 @@ contains
 
         print *, 'C_D (si): ', C_D
 
-        open(unit=103, file='FD_si.bin', status='old', form='unformatted', access='stream', position='append')
-        write(103) F_D_global
-        close(103)
+        write(101) F_D_global
 
     end subroutine s_compute_dragforce_si 
 
@@ -1214,7 +1207,7 @@ contains
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
-        integer :: i, j, k, t_step
+        integer :: i, j, k, t_step, pos
 
         ! initialize
         !$acc parallel loop gang vector default(present)
@@ -1258,9 +1251,7 @@ contains
         q_spatial_avg_glb(3) = q_spatial_avg_glb(3) / N_x_total_glb
 
         ! write the spatial avg of the x-mom 
-        open(unit=102, file='xmom_spatialavg.bin', status='old', form='unformatted', access='stream', position='append')
-        write(102) q_spatial_avg_glb(1)
-        close(102)
+        write(102) q_spatial_avg_glb(1) 
 
         ! set reference quantities
         if ((t_step - 1) == 0) then
@@ -1786,6 +1777,10 @@ contains
 
         @:DEALLOCATE(q_spatial_avg)
         @:DEALLOCATE(q_spatial_avg_glb)
+
+        close(100)
+        close(101)
+        close(102)
 
         ! Writing the footer of and closing the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
