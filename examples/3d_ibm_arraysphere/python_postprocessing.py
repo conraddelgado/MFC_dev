@@ -7,7 +7,7 @@ print('\n \n \n \n')
 
 plotting = True
 
-F_D_data = np.fromfile("FD_vi.bin", dtype=np.float64)
+F_D_data = np.fromfile('FD_vi.bin', dtype=np.float64)
 F_D_data = F_D_data.reshape(-1, N_sphere)  # reshape into (timesteps, num_ibs)
 print('F_D shape:', np.shape(F_D_data), '# of ibs', np.shape(F_D_data)[1])
 
@@ -24,7 +24,7 @@ print('Stokes F_D: ', F_D_stokes)
 F_D_normalized = F_D_mean / F_D_stokes
 print('normalized F_D: ', F_D_normalized)
 
-xmom_data = np.fromfile("xmom_spatialavg.bin", dtype=np.float64)
+xmom_data = np.fromfile('../../../../Desktop/research/data/xmom_spatialavg.bin', dtype=np.float64) # ../../../../Desktop/research/data/
 print('xmom shape: ', np.shape(xmom_data))
 
 if plotting:
