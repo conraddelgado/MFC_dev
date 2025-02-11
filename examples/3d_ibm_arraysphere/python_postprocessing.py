@@ -7,12 +7,22 @@ print('\n \n \n \n')
 
 plotting = True
 
-F_D_data = np.fromfile('FD_vi.bin', dtype=np.float64)
+dt = 1.0E-06
+Nt = 20000
+t_vec = np.array([i*dt for i in range(Nt)])
+
+period = 10*D/v1 
+
+t_nondim = t_vec / period
+
+F_D_data = np.fromfile('../../../../Desktop/research/output_data/phi005/FD_vi.bin', dtype=np.float64)
 F_D_data = F_D_data.reshape(-1, N_sphere)  # reshape into (timesteps, num_ibs)
 print('F_D shape:', np.shape(F_D_data), '# of ibs', np.shape(F_D_data)[1])
 
 F_D_mean = np.sum(F_D_data[-1][:]) / np.shape(F_D_data)[1]
 print('avg F_D: ', F_D_mean)
+
+transient_F_D_mean = [np.mean(F_D_data[i, :]) for i in range(Nt)]
 
 # stokes drag result
 A_circle = np.pi * (0.5*D)**2
@@ -24,15 +34,28 @@ print('Stokes F_D: ', F_D_stokes)
 F_D_normalized = F_D_mean / F_D_stokes
 print('normalized F_D: ', F_D_normalized)
 
-xmom_data = np.fromfile('xmom_spatialavg.bin', dtype=np.float64) # ../../../../Desktop/research/data/
+xmom_data = np.fromfile('../../../../Desktop/research/output_data/phi005/xmom_spatialavg.bin', dtype=np.float64) # ../../../../Desktop/research/output_data/phi005/
 print('xmom shape: ', np.shape(xmom_data))
 
 if plotting:
-    plt.plot(F_D_data[:, 1])
+    part_n = 90
+    plt.plot(t_nondim, F_D_data[:, part_n], \
+             t_nondim, np.mean(F_D_data[:, part_n])*np.ones_like(F_D_data[:, part_n]), '--', \
+             t_nondim, transient_F_D_mean, \
+             t_nondim, F_D_mean*np.ones_like(F_D_data[:, part_n]), '--', \
+             linewidth=2.5)
+    plt.xlabel('$\\tau$ (# cycles)')
+    plt.ylabel('drag force [N]')
+    plt.legend(['particle drag', 'mean particle drag', \
+                'transient mean drag over all particles', 'mean drag over all particles (final t)'])
+    plt.tight_layout()
     plt.show()
     plt.close()
 
-    plt.plot(xmom_data)
+    plt.plot(t_nondim, xmom_data)
+    plt.xlabel('$\\tau$ (# cycles)')
+    plt.ylabel('x-momentum ($\\rho u$) [kg/m$^2$s]')
+    plt.tight_layout()
     plt.show()
     plt.close()
 

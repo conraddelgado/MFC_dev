@@ -1226,7 +1226,7 @@ contains
                                            - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) &
-                                           * 0.4/287
+                                           * 0.4/287.0
 
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
