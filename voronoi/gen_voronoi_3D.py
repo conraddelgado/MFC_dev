@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -51,9 +52,15 @@ if (__name__ == '__main__'):
     print('running 3D...')
 
     # setup 
-    phi = 0.1
+    phi = 0.2
+    str_phi = '02'
+
     D = 0.1
     L = 10*D
+
+    output_dir = '../examples/phi'+str_phi
+    if os.path.exists(output_dir) == False:
+        os.mkdir(output_dir)
 
     N_sphere = int( 6*phi*L**3 / (np.pi*D**3) )
     print(f'volume fraction phi: {phi}, number of spheres: {N_sphere}')
@@ -65,9 +72,9 @@ if (__name__ == '__main__'):
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
     box = freud.box.Box.cube(L)
     
-    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=20)
+    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=30)
 
-    np.savetxt('../examples/3d_ibm_arraysphere/sphere_array_locations.txt', relaxed_points)
+    np.savetxt(output_dir+'/sphere_array_locations.txt', relaxed_points)
 
     fig = plt.figure(figsize=(10,5))
     ax1 = fig.add_subplot(121, projection='3d')

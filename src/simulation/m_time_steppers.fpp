@@ -1252,6 +1252,7 @@ contains
 
         ! write the spatial avg of the x-mom 
         write(102) q_spatial_avg_glb(1) 
+        print *, q_spatial_avg_glb(1)
 
         ! set reference quantities
         if ((t_step - 1) == 0) then
