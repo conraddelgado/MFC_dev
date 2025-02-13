@@ -689,6 +689,9 @@ contains
 
         real(wp) :: start, finish
 
+        logical :: periodic_forcing
+        periodic_forcing = .false.
+
         ! Stage 1 of 3
 
         if (.not. adap_dt) then
@@ -696,10 +699,10 @@ contains
             call nvtxStartRange("TIMESTEP")
         end if
 
-        !if (t_step > 0) then
-        call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
-        call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
-        !end if
+        if (periodic_forcing) then 
+            call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
+            call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
+        end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
@@ -707,9 +710,9 @@ contains
         call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
         !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
 
-        !if (t_step > 0) then
-        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        !end if
+        if (periodic_forcing) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
 
         if (run_time_info) then
             call s_write_run_time_information(q_prim_vf, t_step)
@@ -801,9 +804,9 @@ contains
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
-        !if (t_step > 0) then
-        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        !end if
+        if (periodic_forcing) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
 
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=2)
@@ -882,9 +885,9 @@ contains
         call s_compute_rhs(q_cons_ts(2)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(2)%sf, rhs_pb, mv_ts(2)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
 
-        !if (t_step > 0) then
-        call s_add_periodic_forcing(rhs_vf, q_periodic_force)
-        !end if
+        if (periodic_forcing) then
+            call s_add_periodic_forcing(rhs_vf, q_periodic_force)
+        end if
 
         if (bubbles_lagrange) then
             call s_compute_EL_coupled_solver(q_cons_ts(2)%vf, q_prim_vf, rhs_vf, stage=3)
@@ -1009,7 +1012,7 @@ contains
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
         C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
 
-        print *, 'C_D (vi): ', C_D
+        !print *, 'C_D (vi): ', C_D
         write(100) F_D_global  
 
     end subroutine s_compute_dragforce_vi
@@ -1252,7 +1255,6 @@ contains
 
         ! write the spatial avg of the x-mom 
         write(102) q_spatial_avg_glb(1) 
-        print *, q_spatial_avg_glb(1)
 
         ! set reference quantities
         if ((t_step - 1) == 0) then
