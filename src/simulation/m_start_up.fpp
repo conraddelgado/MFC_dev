@@ -171,7 +171,10 @@ contains
             viscous, surface_tension, &
             bubbles_lagrange, lag_params, &
             rkck_adap_dt, rkck_tolerance, &
-            hyperelasticity, R0ref
+            hyperelasticity, R0ref, &
+            periodic_forcing, periodic_ibs, &
+            compute_CD_vi, compute_CD_si, & 
+            fourier_transform_filtering
 
         ! Checking that an input file has been provided by the user. If it
         ! has, then the input file is read in, otherwise, simulation exits.

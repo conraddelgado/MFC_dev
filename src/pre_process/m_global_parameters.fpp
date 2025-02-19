@@ -248,6 +248,8 @@ module m_global_parameters
     type(pres_field) :: pb
     type(pres_field) :: mv
 
+    logical :: periodic_ibs !< immersed boundaries respect periodicity of domain
+
 contains
 
     !>  Assigns default values to user inputs prior to reading
@@ -488,6 +490,8 @@ contains
 
         ! Lagrangian solver
         rkck_adap_dt = .false.
+
+        periodic_ibs = .false.
 
     end subroutine s_assign_default_values_to_user_inputs
 

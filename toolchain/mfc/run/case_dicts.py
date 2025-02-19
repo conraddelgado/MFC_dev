@@ -92,6 +92,7 @@ PRE_PROCESS.update({
     'n_start': ParamType.INT,
     'n_start_old': ParamType.INT,
     'surface_tension': ParamType.LOG,
+    'periodic_ibs': ParamType.LOG,
 })
 
 for ib_id in range(1, 1000+1):
@@ -246,6 +247,11 @@ SIMULATION.update({
     'viscous': ParamType.LOG,
     'bubbles_lagrange': ParamType.LOG,
     'rkck_tolerance': ParamType.REAL,
+    'periodic_forcing': ParamType.LOG,
+    'periodic_ibs': ParamType.LOG,
+    'compute_CD_vi': ParamType.LOG,
+    'compute_CD_si': ParamType.LOG,
+    'fourier_transform_filtering': ParamType.LOG,
 })
 
 for var in [ 'heatTransfer_model', 'massTransfer_model', 'pressure_corrector',

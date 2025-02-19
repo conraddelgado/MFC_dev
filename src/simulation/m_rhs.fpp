@@ -696,18 +696,20 @@ contains
         end if
 
         ! drag calculation spatial velocity derivatives
-        !$acc parallel loop collapse(4) gang vector default(present)
-        do l = 1, 3
-            do i = idwbuff(1)%beg, idwbuff(1)%end
-                do j = idwbuff(2)%beg, idwbuff(2)%end
-                    do k = idwbuff(3)%beg, idwbuff(3)%end
-                        du_dxyz(l)%vf(1)%sf(i, j, k) = dq_prim_dx_qp(1)%vf(l+1)%sf(i, j, k) ! dudx
-                        du_dxyz(l)%vf(2)%sf(i, j, k) = dq_prim_dy_qp(1)%vf(l+1)%sf(i, j, k) ! dudy
-                        du_dxyz(l)%vf(3)%sf(i, j, k) = dq_prim_dz_qp(1)%vf(l+1)%sf(i, j, k) ! dudz
-                    end do 
+        if (compute_CD_si) then
+            !$acc parallel loop collapse(4) gang vector default(present)
+            do l = 1, 3
+                do i = idwbuff(1)%beg, idwbuff(1)%end
+                    do j = idwbuff(2)%beg, idwbuff(2)%end
+                        do k = idwbuff(3)%beg, idwbuff(3)%end
+                            du_dxyz(l)%vf(1)%sf(i, j, k) = dq_prim_dx_qp(1)%vf(l+1)%sf(i, j, k) ! dudx
+                            du_dxyz(l)%vf(2)%sf(i, j, k) = dq_prim_dy_qp(1)%vf(l+1)%sf(i, j, k) ! dudy
+                            du_dxyz(l)%vf(3)%sf(i, j, k) = dq_prim_dz_qp(1)%vf(l+1)%sf(i, j, k) ! dudz
+                        end do 
+                    end do
                 end do
             end do
-        end do
+        end if 
 
         if (surface_tension) then
             call nvtxStartRange("RHS-SURFACE-TENSION")
@@ -1004,18 +1006,20 @@ contains
             end do
 
             ! drag calculation loop, x-dir
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
-                        rhs_rhouu(2)%sf(i, j, k) = 1._wp/dx(i) * &
-                                                   (flux_n(1)%vf(2)%sf(i - 1, j, k) &
-                                                    - q_prim_calc(1)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k) &
-                                                    - (flux_n(1)%vf(2)%sf(i, j, k) & 
-                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
-                    end do 
+            if (compute_CD_vi) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do i = 0, m
+                    do j = 0, n 
+                        do k = 0, p
+                            rhs_rhouu(2)%sf(i, j, k) = 1._wp/dx(i) * &
+                                                    (flux_n(1)%vf(2)%sf(i - 1, j, k) &
+                                                        - q_prim_calc(1)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k) &
+                                                        - (flux_n(1)%vf(2)%sf(i, j, k) & 
+                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                        end do 
+                    end do
                 end do
-            end do
+            end if
 
             if (model_eqns == 3) then
                 !$acc parallel loop collapse(4) gang vector default(present)
@@ -1128,18 +1132,20 @@ contains
             end do
 
             ! drag calculation loop, y-dir
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
-                        rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dy(j) * &
-                                                   (flux_n(2)%vf(2)%sf(i, j - 1, k) &
-                                                    - q_prim_calc(1)%sf(i , j - 1, k)*q_prim_calc(3)%sf(i , j - 1, k)*q_prim_calc(2)%sf(i , j - 1, k) &
-                                                    - (flux_n(2)%vf(2)%sf(i, j, k) & 
-                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(3)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
-                    end do 
+            if (compute_CD_vi) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do i = 0, m
+                    do j = 0, n 
+                        do k = 0, p
+                            rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dy(j) * &
+                                                    (flux_n(2)%vf(2)%sf(i, j - 1, k) &
+                                                        - q_prim_calc(1)%sf(i , j - 1, k)*q_prim_calc(3)%sf(i , j - 1, k)*q_prim_calc(2)%sf(i , j - 1, k) &
+                                                        - (flux_n(2)%vf(2)%sf(i, j, k) & 
+                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(3)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                        end do 
+                    end do
                 end do
-            end do
+            end if
 
             if (model_eqns == 3) then
                 !$acc parallel loop collapse(4) gang vector default(present)
@@ -1348,18 +1354,20 @@ contains
             end if
 
             ! drag calculation loop, z-dir
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
-                        rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dz(k) * &
-                                                   (flux_n(3)%vf(2)%sf(i, j, k - 1) &
-                                                    - q_prim_calc(1)%sf(i , j, k - 1)*q_prim_calc(4)%sf(i , j, k - 1)*q_prim_calc(2)%sf(i , j, k - 1) &
-                                                    - (flux_n(3)%vf(2)%sf(i, j, k) & 
-                                                    - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(4)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
-                    end do 
+            if (compute_CD_vi) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do i = 0, m
+                    do j = 0, n 
+                        do k = 0, p
+                            rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dz(k) * &
+                                                    (flux_n(3)%vf(2)%sf(i, j, k - 1) &
+                                                        - q_prim_calc(1)%sf(i , j, k - 1)*q_prim_calc(4)%sf(i , j, k - 1)*q_prim_calc(2)%sf(i , j, k - 1) &
+                                                        - (flux_n(3)%vf(2)%sf(i, j, k) & 
+                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(4)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                        end do 
+                    end do
                 end do
-            end do
+            end if
 
             if (model_eqns == 3) then
                 !$acc parallel loop collapse(4) gang vector default(present)

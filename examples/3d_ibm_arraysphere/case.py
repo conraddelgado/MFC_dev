@@ -21,11 +21,11 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 2.0E-06
-Nt = 1000
-t_save = 10
+dt = 1.0E-06
+Nt = 100
+t_save = 1
 
-Nx = 63
+Nx = 64
 Ny = Nx
 Nz = Ny
 
@@ -134,6 +134,13 @@ case_dict = {
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": Re,
+
+    # new case additions
+    "periodic_forcing": "T",
+    "periodic_ibs": "T",
+    "compute_CD_vi": "T",
+    "compute_CD_si": "F",
+    "fourier_transform_filtering": "T",
     }
 
 case_dict.update(ib_dict)

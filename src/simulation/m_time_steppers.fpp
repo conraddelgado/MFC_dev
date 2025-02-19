@@ -308,61 +308,67 @@ contains
         end if
 
         ! allocating drag calculation variables
-        @:ALLOCATE(rhs_rhouu(1:sys_size))
+        if (compute_CD_vi) then
+            @:ALLOCATE(rhs_rhouu(1:sys_size))
 
-        do i = 1, sys_size
-            @:ALLOCATE(rhs_rhouu(i)%sf(0:m, 0:n, 0:p))
-            @:ACC_SETUP_SFs(rhs_rhouu(i))
-        end do
-
-        @:ALLOCATE(du_dxyz(1:3))
-
-        do i = 1, 3
-            @:ALLOCATE(du_dxyz(i)%vf(1:3))
-        end do
-
-        do i = 1, 3
-            do j = 1, 3
-                @:ALLOCATE(du_dxyz(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
+            do i = 1, sys_size
+                @:ALLOCATE(rhs_rhouu(i)%sf(0:m, 0:n, 0:p))
+                @:ACC_SETUP_SFs(rhs_rhouu(i))
             end do
-            @:ACC_SETUP_VFs(du_dxyz(i))
-        end do
 
-        @:ALLOCATE(F_D_vi(num_ibs))
-        @:ALLOCATE(F_D_si(num_ibs))
+            @:ALLOCATE(F_D_vi(num_ibs))
+        end if
 
-        @:ALLOCATE(dudx_surf(1:3))
-        @:ALLOCATE(dudy_surf(1:3))
-        @:ALLOCATE(dudz_surf(1:3))
+        if (compute_CD_si) then
+            @:ALLOCATE(du_dxyz(1:3))
 
-        @:ALLOCATE(stress_tensor(1:3, 1:3))
-        @:ALLOCATE(F_D_mat(1:3))
+            do i = 1, 3
+                @:ALLOCATE(du_dxyz(i)%vf(1:3))
+            end do
 
+            do i = 1, 3
+                do j = 1, 3
+                    @:ALLOCATE(du_dxyz(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                        idwbuff(2)%beg:idwbuff(2)%end, &
+                        idwbuff(3)%beg:idwbuff(3)%end))
+                end do
+                @:ACC_SETUP_VFs(du_dxyz(i))
+            end do
+
+            @:ALLOCATE(F_D_si(num_ibs))
+
+            @:ALLOCATE(dudx_surf(1:3))
+            @:ALLOCATE(dudy_surf(1:3))
+            @:ALLOCATE(dudz_surf(1:3))
+
+            @:ALLOCATE(stress_tensor(1:3, 1:3))
+            @:ALLOCATE(F_D_mat(1:3))
+        end if
 
         ! allocating periodic forcing variables
-        @:ALLOCATE(q_bar(1:5))
-        @:ALLOCATE(q_periodic_force(1:8))
+        if (periodic_forcing) then
+            @:ALLOCATE(q_bar(1:5))
+            @:ALLOCATE(q_periodic_force(1:8))
 
-        do i = 1, 5
-            @:ALLOCATE(q_bar(i)%sf(0:m, 0:n, 0:p))
-            @:ACC_SETUP_SFs(q_bar(i))
-        end do
+            do i = 1, 5
+                @:ALLOCATE(q_bar(i)%sf(0:m, 0:n, 0:p))
+                @:ACC_SETUP_SFs(q_bar(i))
+            end do
 
-        do i = 1, 8
-            @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
-            @:ACC_SETUP_SFs(q_periodic_force(i))
-        end do 
-        
-        @:ALLOCATE(q_spatial_avg(1:5))
-        @:ALLOCATE(q_spatial_avg_glb(1:5))
+            do i = 1, 8
+                @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
+                @:ACC_SETUP_SFs(q_periodic_force(i))
+            end do 
+            
+            @:ALLOCATE(q_spatial_avg(1:5))
+            @:ALLOCATE(q_spatial_avg_glb(1:5))
 
-        N_x_total_glb = (m_glb + 1) * (n_glb + 1) * (p_glb + 1)
-        !$acc update device(N_x_total_glb)
+            N_x_total_glb = (m_glb + 1) * (n_glb + 1) * (p_glb + 1)
+            !$acc update device(N_x_total_glb)
 
-        volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
-        !$acc update device(volfrac_phi)
+            volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+            !$acc update device(volfrac_phi)
+        end if
 
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
@@ -689,9 +695,6 @@ contains
 
         real(wp) :: start, finish
 
-        logical :: periodic_forcing
-        periodic_forcing = .false.
-
         ! Stage 1 of 3
 
         if (.not. adap_dt) then
@@ -707,8 +710,12 @@ contains
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
         
-        call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
-        !call s_compute_dragforce_si(q_prim_vf, du_dxyz)
+        if (compute_CD_vi) then
+            call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
+        end if
+        if (compute_CD_si) then
+            call s_compute_dragforce_si(q_prim_vf, du_dxyz)
+        end if
 
         if (periodic_forcing) then
             call s_add_periodic_forcing(rhs_vf, q_periodic_force)
@@ -1225,11 +1232,11 @@ contains
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
                         q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
-                        q_spatial_avg(5) = q_spatial_avg(5) + (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
+                        q_spatial_avg(5) = q_spatial_avg(5) + 1.4 * (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
                                            - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
-                                           + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) &
-                                           * 0.4/287.0
+                                           + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) 
+                                           
 
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
@@ -1255,6 +1262,7 @@ contains
 
         ! write the spatial avg of the x-mom 
         write(102) q_spatial_avg_glb(1) 
+        print *, 'T', q_spatial_avg_glb(5)
 
         ! set reference quantities
         if ((t_step - 1) == 0) then

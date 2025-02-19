@@ -523,67 +523,69 @@ contains
                     dist = sqrt(sum(dist_vec**2))
 
                     ! all permutations of periodically projected ib
-                    dist_vec_per(1, 1) = x_cc(i) - x_pcen 
-                    dist_vec_per(1, 2) = y_cc(j) - y_pcen
-                    dist_vec_per(1, 3) = z_cc(k) - z_pcen
-                    dist_per(1) = sqrt(sum(dist_vec_per(1, :)**2))
-                    if (dist_per(1) < dist) then    
-                        dist = dist_per(1)
-                        dist_vec = dist_vec_per(1, :)
-                    end if 
+                    if (periodic_ibs) then
+                        dist_vec_per(1, 1) = x_cc(i) - x_pcen 
+                        dist_vec_per(1, 2) = y_cc(j) - y_pcen
+                        dist_vec_per(1, 3) = z_cc(k) - z_pcen
+                        dist_per(1) = sqrt(sum(dist_vec_per(1, :)**2))
+                        if (dist_per(1) < dist) then    
+                            dist = dist_per(1)
+                            dist_vec = dist_vec_per(1, :)
+                        end if 
 
-                    dist_vec_per(2, 1) = x_cc(i) - x_pcen 
-                    dist_vec_per(2, 2) = y_cc(j) - y_centroid
-                    dist_vec_per(2, 3) = z_cc(k) - z_pcen
-                    dist_per(2) = sqrt(sum(dist_vec_per(2, :)**2))
-                    if (dist_per(2) < dist) then    
-                        dist = dist_per(2)
-                        dist_vec = dist_vec_per(2, :)
-                    end if
+                        dist_vec_per(2, 1) = x_cc(i) - x_pcen 
+                        dist_vec_per(2, 2) = y_cc(j) - y_centroid
+                        dist_vec_per(2, 3) = z_cc(k) - z_pcen
+                        dist_per(2) = sqrt(sum(dist_vec_per(2, :)**2))
+                        if (dist_per(2) < dist) then    
+                            dist = dist_per(2)
+                            dist_vec = dist_vec_per(2, :)
+                        end if
 
-                    dist_vec_per(3, 1) = x_cc(i) - x_pcen 
-                    dist_vec_per(3, 2) = y_cc(j) - y_pcen
-                    dist_vec_per(3, 3) = z_cc(k) - z_centroid
-                    dist_per(3) = sqrt(sum(dist_vec_per(3, :)**2))
-                    if (dist_per(3) < dist) then    
-                        dist = dist_per(3)
-                        dist_vec = dist_vec_per(3, :)
-                    end if
+                        dist_vec_per(3, 1) = x_cc(i) - x_pcen 
+                        dist_vec_per(3, 2) = y_cc(j) - y_pcen
+                        dist_vec_per(3, 3) = z_cc(k) - z_centroid
+                        dist_per(3) = sqrt(sum(dist_vec_per(3, :)**2))
+                        if (dist_per(3) < dist) then    
+                            dist = dist_per(3)
+                            dist_vec = dist_vec_per(3, :)
+                        end if
 
-                    dist_vec_per(4, 1) = x_cc(i) - x_pcen 
-                    dist_vec_per(4, 2) = y_cc(j) - y_centroid
-                    dist_vec_per(4, 3) = z_cc(k) - z_centroid
-                    dist_per(4) = sqrt(sum(dist_vec_per(4, :)**2))
-                    if (dist_per(4) < dist) then    
-                        dist = dist_per(4)
-                        dist_vec = dist_vec_per(4, :)
-                    end if
+                        dist_vec_per(4, 1) = x_cc(i) - x_pcen 
+                        dist_vec_per(4, 2) = y_cc(j) - y_centroid
+                        dist_vec_per(4, 3) = z_cc(k) - z_centroid
+                        dist_per(4) = sqrt(sum(dist_vec_per(4, :)**2))
+                        if (dist_per(4) < dist) then    
+                            dist = dist_per(4)
+                            dist_vec = dist_vec_per(4, :)
+                        end if
 
-                    dist_vec_per(5, 1) = x_cc(i) - x_centroid
-                    dist_vec_per(5, 2) = y_cc(j) - y_pcen
-                    dist_vec_per(5, 3) = z_cc(k) - z_pcen
-                    dist_per(5) = sqrt(sum(dist_vec_per(5, :)**2))
-                    if (dist_per(5) < dist) then    
-                        dist = dist_per(5)
-                        dist_vec = dist_vec_per(5, :)
-                    end if
+                        dist_vec_per(5, 1) = x_cc(i) - x_centroid
+                        dist_vec_per(5, 2) = y_cc(j) - y_pcen
+                        dist_vec_per(5, 3) = z_cc(k) - z_pcen
+                        dist_per(5) = sqrt(sum(dist_vec_per(5, :)**2))
+                        if (dist_per(5) < dist) then    
+                            dist = dist_per(5)
+                            dist_vec = dist_vec_per(5, :)
+                        end if
 
-                    dist_vec_per(6, 1) = x_cc(i) - x_centroid
-                    dist_vec_per(6, 2) = y_cc(j) - y_pcen
-                    dist_vec_per(6, 3) = z_cc(k) - z_centroid
-                    dist_per(6) = sqrt(sum(dist_vec_per(6, :)**2))
-                    if (dist_per(6) < dist) then    
-                        dist = dist_per(6)
-                        dist_vec = dist_vec_per(6, :)
-                    end if
+                        dist_vec_per(6, 1) = x_cc(i) - x_centroid
+                        dist_vec_per(6, 2) = y_cc(j) - y_pcen
+                        dist_vec_per(6, 3) = z_cc(k) - z_centroid
+                        dist_per(6) = sqrt(sum(dist_vec_per(6, :)**2))
+                        if (dist_per(6) < dist) then    
+                            dist = dist_per(6)
+                            dist_vec = dist_vec_per(6, :)
+                        end if
 
-                    dist_vec_per(7, 1) = x_cc(i) - x_centroid
-                    dist_vec_per(7, 2) = y_cc(j) - y_centroid
-                    dist_vec_per(7, 3) = z_cc(k) - z_pcen
-                    dist_per(7) = sqrt(sum(dist_vec_per(7, :)**2))
-                    if (dist_per(7) < dist) then    
-                        dist = dist_per(7)
-                        dist_vec = dist_vec_per(7, :)
+                        dist_vec_per(7, 1) = x_cc(i) - x_centroid
+                        dist_vec_per(7, 2) = y_cc(j) - y_centroid
+                        dist_vec_per(7, 3) = z_cc(k) - z_pcen
+                        dist_per(7) = sqrt(sum(dist_vec_per(7, :)**2))
+                        if (dist_per(7) < dist) then    
+                            dist = dist_per(7)
+                            dist_vec = dist_vec_per(7, :)
+                        end if
                     end if
 
                     levelset%sf(i, j, k, ib_patch_id) = dist - radius

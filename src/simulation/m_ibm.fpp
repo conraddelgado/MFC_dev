@@ -118,28 +118,29 @@ contains
         !$acc update device(ghost_points)
 
         ! setup for drag calculation
-        call s_find_num_sphere_markers()
-        !$acc update device(num_sphere_markers)
+        if (compute_CD_si) then
+            call s_find_num_sphere_markers()
+            !$acc update device(num_sphere_markers)
 
-        @:ALLOCATE(sphere_markers_loc(1:num_ibs))
-        do i = 1, num_ibs
-            @:ALLOCATE(sphere_markers_loc(i)%sf(1, num_sphere_markers(i), 3))
-            @:ACC_SETUP_SFs(sphere_markers_loc(i))
-        end do
+            @:ALLOCATE(sphere_markers_loc(1:num_ibs))
+            do i = 1, num_ibs
+                @:ALLOCATE(sphere_markers_loc(i)%sf(1, num_sphere_markers(i), 3))
+                @:ACC_SETUP_SFs(sphere_markers_loc(i))
+            end do
 
-        @:ALLOCATE(data_plane_area(1:num_ibs))
-        do i = 1, num_ibs
-            @:ALLOCATE(data_plane_area(i)%sf(1, 1, num_sphere_markers(i)))
-            @:ACC_SETUP_SFs(data_plane_area(i))
-        end do
+            @:ALLOCATE(data_plane_area(1:num_ibs))
+            do i = 1, num_ibs
+                @:ALLOCATE(data_plane_area(i)%sf(1, 1, num_sphere_markers(i)))
+                @:ACC_SETUP_SFs(data_plane_area(i))
+            end do
 
-        !$acc enter data copyin(sphere_markers_loc, data_plane_area) 
-        call s_find_sphere_markers_loc()
-        !$acc update device(sphere_markers_loc)
+            !$acc enter data copyin(sphere_markers_loc, data_plane_area) 
+            call s_find_sphere_markers_loc()
+            !$acc update device(sphere_markers_loc)
 
-        !call s_readwrite_sphere_surface_data()
-        !$acc update device(data_plane_area)
-
+            call s_readwrite_sphere_surface_data()
+            !$acc update device(data_plane_area)
+        end if
 
     end subroutine s_ibm_setup
 

@@ -150,6 +150,12 @@ module m_global_parameters
     logical :: viscous       !< Viscous effects
     logical :: shear_stress  !< Shear stresses
     logical :: bulk_stress   !< Bulk stresses
+    ! new
+    logical :: periodic_forcing !< for periodic domains, add forcing terms
+    logical :: periodic_ibs !< immersed boundaries respect periodicity of domain
+    logical :: compute_CD_vi !< compute drag force (volume integral)
+    logical :: compute_CD_si !< compute drag force (surface integral)
+    logical :: fourier_transform_filtering !< fourier transfrom data for explicit filtering during runtime
 
     !$acc declare create(chemistry)
 
@@ -171,6 +177,7 @@ module m_global_parameters
     #:endif
 
     !$acc declare create(mpp_lim, model_eqns, mixture_err, alt_soundspeed, avg_state, mp_weno, weno_eps, teno_CT, hypoelasticity, hyperelasticity, hyper_model, elasticity, low_Mach, viscous, shear_stress, bulk_stress)
+    !$acc declare create(periodic_forcing, periodic_ibs, compute_CD_vi, compute_CD_si, fourier_transform_filtering)
 
     logical :: relax          !< activate phase change
     integer :: relax_model    !< Relaxation model
@@ -537,6 +544,12 @@ contains
         viscous = .false.
         shear_stress = .false.
         bulk_stress = .false.
+        ! new
+        periodic_forcing = .false.
+        periodic_ibs = .false.
+        compute_CD_vi = .false.
+        compute_CD_si = .false.
+        fourier_transform_filtering = .false.
 
         #:if not MFC_CASE_OPTIMIZATION
             mapped_weno = .false.

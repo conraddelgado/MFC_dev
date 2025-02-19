@@ -1668,34 +1668,36 @@ contains
                     end if
 
                     ! periodic ib
-                    if (present(ib)) then 
-                        ! check every permutation of the projected cell location
-                        if (((x_cc(i) - x_pcen)**2 &
-                            + (cart_y - y_pcen)**2 &
-                            + (cart_z - z_pcen)**2 <= radius**2) &
-                            .or. ((x_cc(i) - x_pcen)**2 &
-                            + (cart_y - y_centroid)**2 &
-                            + (cart_z - z_centroid)**2 <= radius**2) &
-                            .or. ((x_cc(i) - x_pcen)**2 &
-                            + (cart_y - y_pcen)**2 &
-                            + (cart_z - z_centroid)**2 <= radius**2) &
-                            .or. ((x_cc(i) - x_pcen)**2 &
-                            + (cart_y - y_centroid)**2 &
-                            + (cart_z - z_pcen)**2 <= radius**2) & 
-                            .or. ((x_cc(i) - x_centroid)**2 &
-                            + (cart_y - y_pcen)**2 &
-                            + (cart_z - z_centroid)**2 <= radius**2) &
-                            .or. ((x_cc(i) - x_centroid)**2 &
-                            + (cart_y - y_pcen)**2 &
-                            + (cart_z - z_pcen)**2 <= radius**2) &
-                            .or. ((x_cc(i) - x_centroid)**2 &
-                            + (cart_y - y_centroid)**2 &
-                            + (cart_z - z_pcen)**2 <= radius**2)) &
-                            then
+                    if (periodic_ibs) then
+                        if (present(ib)) then 
+                            ! check every permutation of the projected cell location
+                            if (((x_cc(i) - x_pcen)**2 &
+                                + (cart_y - y_pcen)**2 &
+                                + (cart_z - z_pcen)**2 <= radius**2) &
+                                .or. ((x_cc(i) - x_pcen)**2 &
+                                + (cart_y - y_centroid)**2 &
+                                + (cart_z - z_centroid)**2 <= radius**2) &
+                                .or. ((x_cc(i) - x_pcen)**2 &
+                                + (cart_y - y_pcen)**2 &
+                                + (cart_z - z_centroid)**2 <= radius**2) &
+                                .or. ((x_cc(i) - x_pcen)**2 &
+                                + (cart_y - y_centroid)**2 &
+                                + (cart_z - z_pcen)**2 <= radius**2) & 
+                                .or. ((x_cc(i) - x_centroid)**2 &
+                                + (cart_y - y_pcen)**2 &
+                                + (cart_z - z_centroid)**2 <= radius**2) &
+                                .or. ((x_cc(i) - x_centroid)**2 &
+                                + (cart_y - y_pcen)**2 &
+                                + (cart_z - z_pcen)**2 <= radius**2) &
+                                .or. ((x_cc(i) - x_centroid)**2 &
+                                + (cart_y - y_centroid)**2 &
+                                + (cart_z - z_pcen)**2 <= radius**2)) &
+                                then
 
-                            ! Updating the patch identities bookkeeping variable
-                            patch_id_fp(i, j, k) = patch_id
-                            
+                                ! Updating the patch identities bookkeeping variable
+                                patch_id_fp(i, j, k) = patch_id
+                                
+                            end if
                         end if
                     end if
                     ! end periodic ib
