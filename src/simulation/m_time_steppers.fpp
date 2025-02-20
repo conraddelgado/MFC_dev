@@ -87,12 +87,12 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: q_bar
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
     real(wp), allocatable, dimension(:) :: q_spatial_avg, q_spatial_avg_glb
-    real(wp) :: N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf
+    real(wp) :: N_x_total_glb, volfrac_phi
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
-    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi, rho_inf, u_inf, T_inf)
+    !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
 
 contains
 
@@ -366,7 +366,7 @@ contains
             N_x_total_glb = (m_glb + 1) * (n_glb + 1) * (p_glb + 1)
             !$acc update device(N_x_total_glb)
 
-            volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3.0 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
+            volfrac_phi = num_ibs * 4._wp/3._wp * pi * patch_ib(1)%radius**3 / ((x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg))
             !$acc update device(volfrac_phi)
         end if
 
@@ -380,9 +380,15 @@ contains
         end if
 
         ! clear drag output file for use in m_time_steppers
-        open(unit=100, file='FD_vi.bin', status='replace', form='unformatted', access='stream')
-        open(unit=101, file='FD_si.bin', status='replace', form='unformatted', access='stream')
-        open(unit=102, file='xmom_spatialavg.bin', status='replace', form='unformatted', access='stream')
+        if (compute_CD_vi) then 
+            open(unit=100, file='FD_vi.bin', status='replace', form='unformatted', access='stream')
+        end if
+        if (compute_CD_si) then
+            open(unit=101, file='FD_si.bin', status='replace', form='unformatted', access='stream')
+        end if
+        if (periodic_forcing) then
+            open(unit=102, file='xmom_spatialavg.bin', status='replace', form='unformatted', access='stream')
+        end if
 
     end subroutine s_initialize_time_steppers_module
 
@@ -1017,7 +1023,7 @@ contains
         end do
 
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
-        C_D = F_D_global(1) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = F_D_global(1) / (0.5_wp * rho_inf_ref * (u_inf_ref**2) * pi * (patch_ib(1)%radius**2))
 
         !print *, 'C_D (vi): ', C_D
         write(100) F_D_global  
@@ -1201,9 +1207,9 @@ contains
             call s_mpi_allreduce_sum(F_D_si(i), F_D_global(i))
         end do
 
-        C_D = -F_D_global(4) / (0.5 * rho_inf * (u_inf**2.0) * pi * (patch_ib(1)%radius**2.0))
+        C_D = -F_D_global(4) / (0.5_wp * rho_inf_ref * (u_inf_ref**2) * pi * (patch_ib(1)%radius**2))
 
-        print *, 'C_D (si): ', C_D
+        !print *, 'C_D (si): ', C_D
 
         write(101) F_D_global
 
@@ -1232,12 +1238,11 @@ contains
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) == 0) then
                         q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
-                        q_spatial_avg(5) = q_spatial_avg(5) + 1.4 * (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
-                                           - 0.5 * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
+                        q_spatial_avg(5) = q_spatial_avg(5) + 0.4_wp/287._wp * (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
+                                           - 0.5_wp * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
                                            + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) 
                                            
-
                         q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
                         q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
                         q_spatial_avg(3) = q_spatial_avg(3) + q_cons_vf(4)%sf(i, j, k)
@@ -1262,15 +1267,6 @@ contains
 
         ! write the spatial avg of the x-mom 
         write(102) q_spatial_avg_glb(1) 
-        print *, 'T', q_spatial_avg_glb(5)
-
-        ! set reference quantities
-        if ((t_step - 1) == 0) then
-            u_inf = (q_spatial_avg_glb(1) / q_spatial_avg_glb(4)) / (1._wp - volfrac_phi)
-            rho_inf = q_spatial_avg_glb(4) / (1._wp - volfrac_phi)
-            T_inf = q_spatial_avg_glb(5) / (1._wp - volfrac_phi)
-            !$acc update device(u_inf, rho_inf, T_inf)
-        end if
         
         !$acc update device(q_spatial_avg_glb(1), q_spatial_avg_glb(2), q_spatial_avg_glb(3), q_spatial_avg_glb(4), q_spatial_avg_glb(5))
 
@@ -1309,9 +1305,9 @@ contains
             do j = 0, n
                 do k = 0, p
                     ! f_u
-                    q_periodic_force(1)%sf(i, j, k) = (rho_inf*u_inf - q_bar(1)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
-                    q_periodic_force(2)%sf(i, j, k) = (rho_inf*u_inf - q_bar(2)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
-                    q_periodic_force(3)%sf(i, j, k) = (rho_inf*u_inf - q_bar(3)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(1)%sf(i, j, k) = (rho_inf_ref*u_inf_ref - q_bar(1)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(2)%sf(i, j, k) = (rho_inf_ref*u_inf_ref - q_bar(2)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(3)%sf(i, j, k) = (rho_inf_ref*u_inf_ref - q_bar(3)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
 
                     ! u*f_u
                     q_periodic_force(4)%sf(i, j, k) = q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) * q_periodic_force(1)%sf(i, j, k)
@@ -1319,10 +1315,10 @@ contains
                     q_periodic_force(6)%sf(i, j, k) = q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) * q_periodic_force(3)%sf(i, j, k)
 
                     ! f_rho
-                    q_periodic_force(7)%sf(i, j, k) = (rho_inf - q_bar(4)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(7)%sf(i, j, k) = (rho_inf_ref - q_bar(4)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
 
                     ! f_T
-                    q_periodic_force(8)%sf(i, j, k) = (q_cons_vf(1)%sf(i, j, k) / 1.4) * (T_inf - q_bar(5)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
+                    q_periodic_force(8)%sf(i, j, k) = (q_cons_vf(1)%sf(i, j, k) / 1.4_wp) * (T_inf_ref - q_bar(5)%sf(i, j, k)/(1._wp - volfrac_phi)) / dt
                 end do 
             end do
         end do
@@ -1753,45 +1749,57 @@ contains
             @:DEALLOCATE(rhs_vf)
         end if
 
-        do i = 1, sys_size
-            @:DEALLOCATE(rhs_rhouu(i)%sf)
-        end do 
-        @:DEALLOCATE(rhs_rhouu)
+        if (compute_CD_vi) then
+            do i = 1, sys_size
+                @:DEALLOCATE(rhs_rhouu(i)%sf)
+            end do 
+            @:DEALLOCATE(rhs_rhouu)
+        end if
 
-        do i = 1, 3
-            do j = 1, 3
-                @:DEALLOCATE(du_dxyz(i)%vf(j)%sf)
+        if (compute_CD_si) then
+            do i = 1, 3
+                do j = 1, 3
+                    @:DEALLOCATE(du_dxyz(i)%vf(j)%sf)
+                end do
+                @:DEALLOCATE(du_dxyz(i)%vf)
             end do
-            @:DEALLOCATE(du_dxyz(i)%vf)
-        end do
-        @:DEALLOCATE(du_dxyz)
+            @:DEALLOCATE(du_dxyz)
 
-        do i = 1, 5
-            @:DEALLOCATE(q_bar(i)%sf)
-        end do
-        @:DEALLOCATE(q_bar)
+            @:DEALLOCATE(F_D_vi)
+            @:DEALLOCATE(F_D_si)
 
-        @:DEALLOCATE(F_D_vi)
-        @:DEALLOCATE(F_D_si)
+            @:DEALLOCATE(dudx_surf)
+            @:DEALLOCATE(dudy_surf)
+            @:DEALLOCATE(dudz_surf)
 
-        @:DEALLOCATE(dudx_surf)
-        @:DEALLOCATE(dudy_surf)
-        @:DEALLOCATE(dudz_surf)
+            @:DEALLOCATE(stress_tensor)
+            @:DEALLOCATE(F_D_mat)
+        end if
 
-        @:DEALLOCATE(stress_tensor)
-        @:DEALLOCATE(F_D_mat)
+        if (periodic_forcing) then
+            do i = 1, 5
+                @:DEALLOCATE(q_bar(i)%sf)
+            end do
+            @:DEALLOCATE(q_bar)
+
+            do i = 1, 8
+                @:DEALLOCATE(q_periodic_force(i)%sf)
+            end do
+            @:DEALLOCATE(q_periodic_force)
+    
+            @:DEALLOCATE(q_spatial_avg)
+            @:DEALLOCATE(q_spatial_avg_glb)
+        end if
         
-        do i = 1, 8
-            @:DEALLOCATE(q_periodic_force(i)%sf)
-        end do
-        @:DEALLOCATE(q_periodic_force)
-
-        @:DEALLOCATE(q_spatial_avg)
-        @:DEALLOCATE(q_spatial_avg_glb)
-
-        close(100)
-        close(101)
-        close(102)
+        if (compute_CD_vi) then
+            close(100)
+        end if 
+        if (compute_CD_si) then 
+            close(101)
+        end if
+        if (periodic_forcing) then
+            close(102)
+        end if
 
         ! Writing the footer of and closing the run-time information file
         if (proc_rank == 0 .and. run_time_info) then

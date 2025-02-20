@@ -157,6 +157,10 @@ module m_global_parameters
     logical :: compute_CD_si !< compute drag force (surface integral)
     logical :: fourier_transform_filtering !< fourier transfrom data for explicit filtering during runtime
 
+    real(wp) :: u_inf_ref !< reference freestream velocity
+    real(wp) :: rho_inf_ref !< reference freestream density 
+    real(wp) :: T_inf_ref !< reference freestream temperature
+
     !$acc declare create(chemistry)
 
     logical :: bodyForces
@@ -177,7 +181,7 @@ module m_global_parameters
     #:endif
 
     !$acc declare create(mpp_lim, model_eqns, mixture_err, alt_soundspeed, avg_state, mp_weno, weno_eps, teno_CT, hypoelasticity, hyperelasticity, hyper_model, elasticity, low_Mach, viscous, shear_stress, bulk_stress)
-    !$acc declare create(periodic_forcing, periodic_ibs, compute_CD_vi, compute_CD_si, fourier_transform_filtering)
+    !$acc declare create(u_inf_ref, rho_inf_ref, T_inf_ref)
 
     logical :: relax          !< activate phase change
     integer :: relax_model    !< Relaxation model
@@ -551,6 +555,10 @@ contains
         compute_CD_si = .false.
         fourier_transform_filtering = .false.
 
+        u_inf_ref = dflt_real
+        rho_inf_ref = dflt_real
+        T_inf_ref = dflt_real
+
         #:if not MFC_CASE_OPTIMIZATION
             mapped_weno = .false.
             wenoz = .false.
@@ -744,6 +752,8 @@ contains
 
         integer :: i, j, k
         integer :: fac
+
+        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref)
 
         #:if not MFC_CASE_OPTIMIZATION
             ! Determining the degree of the WENO polynomials

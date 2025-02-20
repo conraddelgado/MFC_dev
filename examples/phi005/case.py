@@ -26,7 +26,7 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 
 dt = 2.0E-06
 Nt = 500
-t_save = 1
+t_save = 10
 
 Nx = 64
 Ny = Nx

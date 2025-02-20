@@ -174,7 +174,8 @@ contains
             hyperelasticity, R0ref, &
             periodic_forcing, periodic_ibs, &
             compute_CD_vi, compute_CD_si, & 
-            fourier_transform_filtering
+            fourier_transform_filtering, &
+            u_inf_ref, rho_inf_ref, T_inf_ref
 
         ! Checking that an input file has been provided by the user. If it
         ! has, then the input file is read in, otherwise, simulation exits.
@@ -1624,6 +1625,8 @@ contains
         if (ib) then
             !$acc update device(ib_markers%sf)
         end if
+
+        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref)
 
     end subroutine s_initialize_gpu_vars
 

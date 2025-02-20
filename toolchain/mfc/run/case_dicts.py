@@ -247,11 +247,15 @@ SIMULATION.update({
     'viscous': ParamType.LOG,
     'bubbles_lagrange': ParamType.LOG,
     'rkck_tolerance': ParamType.REAL,
+    
     'periodic_forcing': ParamType.LOG,
     'periodic_ibs': ParamType.LOG,
     'compute_CD_vi': ParamType.LOG,
     'compute_CD_si': ParamType.LOG,
     'fourier_transform_filtering': ParamType.LOG,
+    'u_inf_ref': ParamType.REAL,
+    'rho_inf_ref': ParamType.REAL,
+    'T_inf_ref': ParamType.REAL,
 })
 
 for var in [ 'heatTransfer_model', 'massTransfer_model', 'pressure_corrector',

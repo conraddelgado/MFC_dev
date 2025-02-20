@@ -83,8 +83,6 @@ contains
 
         !$acc enter data copyin(gp_layers, num_gps, num_inner_gps)
 
-        @:ALLOCATE(num_sphere_markers(num_ibs))
-
     end subroutine s_initialize_ibm_module
 
     !> Initializes the values of various IBM variables, such as ghost points and
@@ -119,6 +117,8 @@ contains
 
         ! setup for drag calculation
         if (compute_CD_si) then
+            @:ALLOCATE(num_sphere_markers(num_ibs))
+
             call s_find_num_sphere_markers()
             !$acc update device(num_sphere_markers)
 
@@ -982,15 +982,17 @@ contains
         @:DEALLOCATE(levelset%sf)
         @:DEALLOCATE(levelset_norm%sf)
 
-        @:DEALLOCATE(num_sphere_markers)
-        do i = 1, num_ibs
-            @:DEALLOCATE(sphere_markers_loc(i)%sf)
-        end do
-        @:DEALLOCATE(sphere_markers_loc)
-        do i = 1, num_ibs
-            @:DEALLOCATE(data_plane_area(i)%sf)
-        end do
-        @:DEALLOCATE(data_plane_area)
+        if (compute_CD_si) then
+            @:DEALLOCATE(num_sphere_markers)
+            do i = 1, num_ibs
+                @:DEALLOCATE(sphere_markers_loc(i)%sf)
+            end do
+            @:DEALLOCATE(sphere_markers_loc)
+            do i = 1, num_ibs
+                @:DEALLOCATE(data_plane_area(i)%sf)
+            end do
+            @:DEALLOCATE(data_plane_area)
+        end if
 
     end subroutine s_finalize_ibm_module
 
