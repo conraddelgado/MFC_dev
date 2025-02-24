@@ -2,7 +2,7 @@ import sys
 import numpy as np 
 import matplotlib.pyplot as plt
 
-data_dir = '../../../../Desktop/research/output_data/phi005/'
+data_dir = '../../../Desktop/research/output_data/phi01/'
 case_dir = '../examples/3d_ibm_arraysphere/'
 sys.path.append(case_dir)
 

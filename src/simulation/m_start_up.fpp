@@ -1449,6 +1449,9 @@ contains
         if (grid_geometry == 3) call s_initialize_fftw_module()
         call s_initialize_riemann_solvers_module()
 
+        if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter()
+        if (fourier_transform_filtering) call s_initialize_fftw_kernelG()
+
         if(bubbles_euler) call s_initialize_bubbles_EE_module()
         if (ib) call s_initialize_ibm_module()
         if (qbmm) call s_initialize_qbmm_module()

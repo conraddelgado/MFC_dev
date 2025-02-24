@@ -15,6 +15,8 @@ module m_fftw
 
     use m_mpi_proxy            !< Message passing interface (MPI) module proxy
 
+    use m_ibm
+
 #if defined(MFC_OpenACC) && defined(__PGI)
     use cufft
 #elif defined(MFC_OpenACC)
@@ -27,7 +29,10 @@ module m_fftw
 
     private; public :: s_initialize_fftw_module, &
  s_apply_fourier_filter, &
- s_finalize_fftw_module
+ s_finalize_fftw_module, & 
+ s_initialize_fftw_explicit_filter, &
+ s_apply_fftw_explicit_filter, & 
+ s_initialize_fftw_kernelG
 
 #if !defined(MFC_OpenACC)
     include 'fftw3.f03'
@@ -64,6 +69,24 @@ module m_fftw
 
     integer :: istride, ostride, idist, odist, rank
 #endif
+    ! new
+    type(c_ptr) :: plan_forward
+    type(c_ptr) :: plan_backward
+
+    real(c_double), pointer :: array_in(:, :, :)
+    complex(c_double_complex), pointer :: array_out(:, :, :)
+
+    type(c_ptr) :: p_real
+    type(c_ptr) :: p_complex
+
+    ! for filtering kernel
+    type(c_ptr) :: plan_kernelG_forward
+
+    real(c_double), pointer :: array_kernelG_in(:, :, :)
+    complex(c_double_complex), pointer :: array_kernelG_out(:, :, :)
+
+    type(c_ptr) :: p_kernelG_real
+    type(c_ptr) :: p_kernelG_complex
 
 contains
 
@@ -122,6 +145,91 @@ contains
 #endif
 
     end subroutine s_initialize_fftw_module
+
+    ! create fftw plan to be used for explicit filtering of data -> volume filtering
+    subroutine s_initialize_fftw_explicit_filter
+        print *, 'FFTW SETUP...'
+
+        ! data setup 
+        p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
+        p_complex = fftw_alloc_complex(int(((m+1)/2+1)*(n+1)*(p+1), C_SIZE_T))
+
+        call c_f_pointer(p_real, array_in, [m+1, n+1, p+1])
+        call c_f_pointer(p_complex, array_out, [(m+1)/2+1, n+1, p+1])
+
+        plan_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_in, array_out, FFTW_ESTIMATE)
+        plan_backward = fftw_plan_dft_c2r_3d(p+1, n+1, m+1, array_out, array_in, FFTW_ESTIMATE)
+
+        ! kernel setup
+        p_kernelG_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
+        p_kernelG_complex = fftw_alloc_complex(int(((m+1)/2+1)*(n+1)*(p+1), C_SIZE_T))
+
+        call c_f_pointer(p_kernelG_real, array_kernelG_in, [m+1, n+1, p+1])
+        call c_f_pointer(p_kernelG_complex, array_kernelG_out, [(m+1)/2+1, n+1, p+1])
+
+        plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_ESTIMATE)
+
+    end subroutine s_initialize_fftw_explicit_filter
+
+    subroutine s_initialize_fftw_kernelG
+
+        real(dp) :: r, delta
+        integer :: i, j, k
+
+        delta = 4*patch_ib(1)%radius
+
+        do i = 1, m+1
+            do j = 1, n+1 
+                do k = 1, p+1
+                    r = sqrt(x_cc(i)**2 + y_cc(i)**2 + z_cc(i)**2)
+                    if (r >= 0 .and. r <= delta) then
+                        array_kernelG_in(i, j, k) = 21_dp/(2_dp*pi*delta**3)*(4*r/delta + 1)*(1 - r/delta)**4
+                    else 
+                        array_kernelG_in(i, j, k) = 0 
+                    end if 
+                end do
+            end do
+        end do
+        print *, array_kernelG_in(int(m/2), int(n/2), int(p/2))
+
+    end subroutine s_initialize_fftw_kernelG
+
+    subroutine s_apply_fftw_explicit_filter(q_cons_vf, q_filtered, volfrac_phi)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_filtered
+
+        real(dp) :: volfrac_phi
+
+        integer :: i, j, k, l
+
+        do l = 1, sys_size
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        if (ib_markers%sf(i, j, k) == 0) then
+                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)
+                        else
+                            array_in(i+1, j+1, k+1) = 0_dp
+                        end if
+                    end do 
+                end do
+            end do
+
+            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+            call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
+
+            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+            q_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((m+1)*(n+1)*(p+1) * (1._wp - volfrac_phi)) ! unnormalized DFT
+
+            !print *, q_cons_vf(l)%sf(10, 10, 10)
+            !print *, q_filtered(l)%sf(10, 10, 10)
+        end do 
+
+
+    end subroutine s_apply_fftw_explicit_filter
 
     !>  The purpose of this subroutine is to apply a Fourier low-
         !!      pass filter to the flow variables in the azimuthal direction

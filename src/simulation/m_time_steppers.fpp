@@ -89,10 +89,14 @@ module m_time_steppers
     real(wp), allocatable, dimension(:) :: q_spatial_avg, q_spatial_avg_glb
     real(wp) :: N_x_total_glb, volfrac_phi
 
+    ! filtering variables
+    type(scalar_field), allocatable, dimension(:) :: q_filtered
+
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
     !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
+    !$acc declare create(q_filtered)
 
 contains
 
@@ -370,6 +374,14 @@ contains
             !$acc update device(volfrac_phi)
         end if
 
+        if (fourier_transform_filtering) then 
+            @:ALLOCATE(q_filtered(1:sys_size))
+            do i = 1, sys_size
+                @:ALLOCATE(q_filtered(i)%sf(0:m, 0:n, 0:p))
+                @:ACC_SETUP_SFs(q_filtered(i))
+            end do
+        end if
+
         ! Opening and writing the header of the run-time information file
         if (proc_rank == 0 .and. run_time_info) then
             call s_open_run_time_information_file()
@@ -388,6 +400,9 @@ contains
         end if
         if (periodic_forcing) then
             open(unit=102, file='xmom_spatialavg.bin', status='replace', form='unformatted', access='stream')
+        end if
+        if (fourier_transform_filtering) then
+            open(unit=103, file='q_filtered.bin', status='replace', form='unformatted', access='stream')
         end if
 
     end subroutine s_initialize_time_steppers_module
@@ -712,6 +727,14 @@ contains
             call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
             call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
         end if
+
+        print *, 'filtering...'
+        if (fourier_transform_filtering) then
+            call s_apply_fftw_explicit_filter(q_cons_ts(1)%vf, q_filtered, volfrac_phi)
+        end if
+        write(103) q_filtered(2)%sf(:, :, :)
+        print *, q_filtered(2)%sf(10, 10, 10)
+        print *, 'done filtering.'
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
@@ -1790,6 +1813,13 @@ contains
             @:DEALLOCATE(q_spatial_avg)
             @:DEALLOCATE(q_spatial_avg_glb)
         end if
+
+        if (fourier_transform_filtering) then 
+            do i = 1, sys_size
+                @:DEALLOCATE(q_filtered(i)%sf)
+            end do
+            @:DEALLOCATE(q_filtered)
+        end if
         
         if (compute_CD_vi) then
             close(100)
@@ -1799,6 +1829,9 @@ contains
         end if
         if (periodic_forcing) then
             close(102)
+        end if
+        if (fourier_transform_filtering) then
+            close(103)
         end if
 
         ! Writing the footer of and closing the run-time information file
