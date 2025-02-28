@@ -375,8 +375,8 @@ contains
         end if
 
         if (fourier_transform_filtering) then 
-            @:ALLOCATE(q_filtered(1:sys_size))
-            do i = 1, sys_size
+            @:ALLOCATE(q_filtered(1:sys_size+1))
+            do i = 1, sys_size+1
                 @:ALLOCATE(q_filtered(i)%sf(0:m, 0:n, 0:p))
                 @:ACC_SETUP_SFs(q_filtered(i))
             end do
@@ -732,7 +732,7 @@ contains
         if (fourier_transform_filtering) then
             call s_apply_fftw_explicit_filter(q_cons_ts(1)%vf, q_filtered, volfrac_phi)
         end if
-        write(103) q_filtered(2)%sf(:, :, :)
+        write(103) q_filtered(2)%sf(:, :, :) !q_filtered(sys_size+1)%sf(:, :, :)
         print *, q_filtered(2)%sf(10, 10, 10)
         print *, 'done filtering.'
 

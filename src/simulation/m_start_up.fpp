@@ -1449,8 +1449,8 @@ contains
         if (grid_geometry == 3) call s_initialize_fftw_module()
         call s_initialize_riemann_solvers_module()
 
-        if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter()
-        if (fourier_transform_filtering) call s_initialize_fftw_kernelG()
+        if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter_module()
+        if (fourier_transform_filtering) call s_initialize_gaussian_filter()
 
         if(bubbles_euler) call s_initialize_bubbles_EE_module()
         if (ib) call s_initialize_ibm_module()
@@ -1646,6 +1646,7 @@ contains
         call s_finalize_weno_module()
         call s_finalize_variables_conversion_module()
         if (grid_geometry == 3) call s_finalize_fftw_module
+        if (fourier_transform_filtering) call s_finalize_fftw_explicit_filter_module
         call s_finalize_mpi_proxy_module()
         call s_finalize_global_parameters_module()
         if (relax) call s_finalize_relaxation_solver_module()

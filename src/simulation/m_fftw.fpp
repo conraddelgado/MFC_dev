@@ -30,9 +30,10 @@ module m_fftw
     private; public :: s_initialize_fftw_module, &
  s_apply_fourier_filter, &
  s_finalize_fftw_module, & 
- s_initialize_fftw_explicit_filter, &
+ s_initialize_fftw_explicit_filter_module, &
  s_apply_fftw_explicit_filter, & 
- s_initialize_fftw_kernelG
+ s_initialize_gaussian_filter, & 
+ s_finalize_fftw_explicit_filter_module
 
 #if !defined(MFC_OpenACC)
     include 'fftw3.f03'
@@ -147,7 +148,7 @@ contains
     end subroutine s_initialize_fftw_module
 
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
-    subroutine s_initialize_fftw_explicit_filter
+    subroutine s_initialize_fftw_explicit_filter_module
         print *, 'FFTW SETUP...'
 
         ! data setup 
@@ -169,34 +170,50 @@ contains
 
         plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_ESTIMATE)
 
-    end subroutine s_initialize_fftw_explicit_filter
+    end subroutine s_initialize_fftw_explicit_filter_module
 
-    subroutine s_initialize_fftw_kernelG
-
-        real(dp) :: r, delta
+    subroutine s_initialize_gaussian_filter
+        real(dp) :: r_norm
+        real(dp) :: sigma
+        real(dp) :: kx, ky, kz, k_squared
+        real(dp) :: Lx, Ly, Lz  
         integer :: i, j, k
 
-        delta = 4*patch_ib(1)%radius
+        sigma = 3_dp * patch_ib(1)%radius
 
-        do i = 1, m+1
-            do j = 1, n+1 
-                do k = 1, p+1
-                    r = sqrt(x_cc(i)**2 + y_cc(i)**2 + z_cc(i)**2)
-                    if (r >= 0 .and. r <= delta) then
-                        array_kernelG_in(i, j, k) = 21_dp/(2_dp*pi*delta**3)*(4*r/delta + 1)*(1 - r/delta)**4
-                    else 
-                        array_kernelG_in(i, j, k) = 0 
-                    end if 
+        Lx = x_domain%end - x_domain%beg
+        Ly = y_domain%end - y_domain%beg   
+        Lz = z_domain%end - z_domain%beg    
+
+        do i = 0, (m+1)/2 
+            do j = 0, n
+                do k = 0, p
+                    kx = 2.0_dp * pi * i / Lx
+
+                    if (j <= (n+1)/2) then
+                        ky = 2.0_dp * pi * j / Ly
+                    else
+                        ky = 2.0_dp * pi * (j - (n+1)) / Ly
+                    end if
+
+                    if (k <= (p+1)/2) then
+                        kz = 2.0_dp * pi * k / Lz
+                    else
+                        kz = 2.0_dp * pi * (k - (p+1)) / Lz
+                    end if
+
+                    k_squared = kx**2 + ky**2 + kz**2
+
+                    array_kernelG_out(i+1, j+1, k+1) = exp(-0.5_dp * sigma**2 * k_squared)
                 end do
             end do
         end do
-        print *, array_kernelG_in(int(m/2), int(n/2), int(p/2))
 
-    end subroutine s_initialize_fftw_kernelG
+    end subroutine s_initialize_gaussian_filter
 
     subroutine s_apply_fftw_explicit_filter(q_cons_vf, q_filtered, volfrac_phi)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_filtered
+        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_filtered
 
         real(dp) :: volfrac_phi
 
@@ -216,18 +233,35 @@ contains
             end do
 
             call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-            call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
 
             array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
 
             call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-            q_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((m+1)*(n+1)*(p+1) * (1._wp - volfrac_phi)) ! unnormalized DFT
-
-            !print *, q_cons_vf(l)%sf(10, 10, 10)
-            !print *, q_filtered(l)%sf(10, 10, 10)
+            q_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
+                        
         end do 
 
+        ! volume filter fluid volume fraction
+        do i = 0, m
+            do j = 0, n 
+                do k = 0, p
+                    if (ib_markers%sf(i, j, k) == 0) then ! in fluid
+                        array_in(i+1, j+1, k+1) = 1_dp
+                    else
+                        array_in(i+1, j+1, k+1) = 0_dp
+                    end if
+                end do 
+            end do
+        end do
+
+        call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+
+        array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+        call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+        q_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
 
     end subroutine s_apply_fftw_explicit_filter
 
@@ -429,5 +463,17 @@ contains
 #endif
 
     end subroutine s_finalize_fftw_module
+
+    subroutine s_finalize_fftw_explicit_filter_module
+        call fftw_free(p_real)
+        call fftw_free(p_complex)
+        call fftw_free(p_kernelG_real)
+        call fftw_free(p_kernelG_complex)
+
+        call fftw_destroy_plan(plan_forward)
+        call fftw_destroy_plan(plan_backward)
+        call fftw_destroy_plan(plan_kernelG_forward)
+
+    end subroutine s_finalize_fftw_explicit_filter_module
 
 end module m_fftw
