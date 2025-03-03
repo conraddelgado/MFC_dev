@@ -256,6 +256,7 @@ SIMULATION.update({
     'u_inf_ref': ParamType.REAL,
     'rho_inf_ref': ParamType.REAL,
     'T_inf_ref': ParamType.REAL,
+    'store_levelset':ParamType.LOG,
 })
 
 for var in [ 'heatTransfer_model', 'massTransfer_model', 'pressure_corrector',

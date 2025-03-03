@@ -34,8 +34,8 @@ plt.close()
 ################ verification ################
 
 L = 0.5
-N = 64
-q_filtered = np.fromfile('../examples/3d_ibm_2sphere/q_filtered.bin', dtype=np.float64)
+N = 100
+q_filtered = np.fromfile('../examples/phi005/q_filtered.bin', dtype=np.float64)
 q_filtered = q_filtered.reshape((N, N, N, -1), order='F')
 print(np.shape(q_filtered))
 

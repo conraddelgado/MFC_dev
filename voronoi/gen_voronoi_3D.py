@@ -52,8 +52,8 @@ if (__name__ == '__main__'):
     print('running 3D...')
 
     # setup 
-    phi = 0.05
-    str_phi = '005'
+    phi = 0.2
+    str_phi = '02'
 
     D = 0.1
     L = 10*D
@@ -64,6 +64,7 @@ if (__name__ == '__main__'):
 
     N_sphere = int( 6*phi*L**3 / (np.pi*D**3) )
     print(f'volume fraction phi: {phi}, number of spheres: {N_sphere}')
+    print(f'actual phi value: {N_sphere*4/3*np.pi*(D/2)**3/(L**3)}')
 
     x_i = L/2 * np.random.uniform(-1, 1, N_sphere)
     y_i = L/2 * np.random.uniform(-1, 1, N_sphere)
@@ -73,8 +74,18 @@ if (__name__ == '__main__'):
     box = freud.box.Box.cube(L)
     
     relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=30)
+    print(np.shape(relaxed_points))
 
     np.savetxt(output_dir+'/sphere_array_locations.txt', relaxed_points)
+
+    # check no spheres are overlaping
+    for i in range(N_sphere):
+        for j in range(N_sphere):
+            if (i != j):
+                dist = np.sqrt((relaxed_points[i, 0] - relaxed_points[j, 0])**2 + (relaxed_points[i, 1] - relaxed_points[j, 1])**2 + (relaxed_points[i, 2] - relaxed_points[j, 2])**2)
+                if (dist <= 1.05*D):
+                    print(f'spheres overlaping, dist={dist}, spheres #: {i}, {j}')
+                    print(f'locations: ({relaxed_points[i, :]}), ({relaxed_points[j, :]})')
 
     fig = plt.figure(figsize=(10,5))
     ax1 = fig.add_subplot(121, projection='3d')

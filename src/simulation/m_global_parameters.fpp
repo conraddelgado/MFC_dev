@@ -161,6 +161,8 @@ module m_global_parameters
     real(wp) :: rho_inf_ref !< reference freestream density 
     real(wp) :: T_inf_ref !< reference freestream temperature
 
+    logical :: store_levelset !< store levelset and levelset_norm data, if false: compute levelset on fly
+
     !$acc declare create(chemistry)
 
     logical :: bodyForces
@@ -558,6 +560,8 @@ contains
         u_inf_ref = dflt_real
         rho_inf_ref = dflt_real
         T_inf_ref = dflt_real
+
+        store_levelset = .true.
 
         #:if not MFC_CASE_OPTIMIZATION
             mapped_weno = .false.

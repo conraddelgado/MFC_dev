@@ -54,6 +54,10 @@ module m_ibm
 
     !$acc declare create(num_sphere_markers, sphere_markers_loc, data_plane_area)
 
+    real(wp) :: x_domain_beg_glb, x_domain_end_glb, y_domain_beg_glb, y_domain_end_glb, z_domain_beg_glb, z_domain_end_glb !< global domain beginning/end
+    
+    !$acc declare create(x_domain_beg_glb, x_domain_end_glb, y_domain_beg_glb, y_domain_end_glb, z_domain_beg_glb, z_domain_end_glb)
+
 contains
 
     !>  Allocates memory for the variables in the IBM module
@@ -71,14 +75,18 @@ contains
         else
             @:ALLOCATE(ib_markers%sf(-gp_layers:m+gp_layers, &
                 -gp_layers:n+gp_layers, 0:0))
-            @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
-                -gp_layers:n+gp_layers, 0:0, num_ibs))
-            @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
-                -gp_layers:n+gp_layers, 0:0, num_ibs, 3))
+            if (store_levelset) then
+                @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
+                    -gp_layers:n+gp_layers, 0:0, num_ibs))
+                @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
+                    -gp_layers:n+gp_layers, 0:0, num_ibs, 3))
+            end if
         end if
 
         @:ACC_SETUP_SFs(ib_markers)
-        @:ACC_SETUP_SFs(levelset)
+        if (store_levelset) then 
+            @:ACC_SETUP_SFs(levelset)
+        end if
         ! @:ALLOCATE(ib_markers%sf(0:m, 0:n, 0:p))
 
         !$acc enter data copyin(gp_layers, num_gps, num_inner_gps)
@@ -140,6 +148,17 @@ contains
 
             call s_readwrite_sphere_surface_data()
             !$acc update device(data_plane_area)
+        end if
+
+        if (.not. store_levelset) then
+            call s_mpi_allreduce_min(x_domain%beg, x_domain_beg_glb)
+            call s_mpi_allreduce_max(x_domain%end, x_domain_end_glb)
+            call s_mpi_allreduce_min(y_domain%beg, y_domain_beg_glb)
+            call s_mpi_allreduce_max(y_domain%end, y_domain_end_glb)
+            call s_mpi_allreduce_min(z_domain%beg, z_domain_beg_glb)
+            call s_mpi_allreduce_max(z_domain%end, z_domain_end_glb)
+
+            !$acc update device(x_domain_beg_glb, x_domain_end_glb, y_domain_beg_glb, y_domain_end_glb, z_domain_beg_glb, z_domain_end_glb)
         end if
 
     end subroutine s_ibm_setup
@@ -382,6 +401,13 @@ contains
         integer :: dir
         integer :: index
 
+        real(wp) :: radius, x_centroid, y_centroid, z_centroid
+        real(wp) :: x_pcen, y_pcen, z_pcen 
+        real(wp) :: dist_calc
+        real(wp), dimension(3) :: dist_vec
+        real(wp), dimension(7, 3) :: dist_vec_per
+        real(wp), dimension(7) :: dist_per
+
         do q = 1, num_gps
             gp = ghost_points(q)
             i = gp%loc(1)
@@ -397,8 +423,106 @@ contains
 
             ! Calculate and store the precise location of the image point
             patch_id = gp%ib_patch_id
-            dist = abs(levelset%sf(i, j, k, patch_id))
-            norm(:) = levelset_norm%sf(i, j, k, patch_id, :)
+            if (store_levelset) then 
+                dist = abs(levelset%sf(i, j, k, patch_id))
+                norm(:) = levelset_norm%sf(i, j, k, patch_id, :)
+            else ! compute levelset and levelset_norm on the fly
+                radius = patch_ib(patch_id)%radius
+                x_centroid = patch_ib(patch_id)%x_centroid
+                y_centroid = patch_ib(patch_id)%y_centroid
+                z_centroid = patch_ib(patch_id)%z_centroid
+                if ((x_centroid - x_domain_beg_glb) <= radius) then
+                    x_pcen = x_domain_end_glb + (x_centroid - x_domain_beg_glb)
+                else if ((x_domain_end_glb - x_centroid) <= radius) then 
+                    x_pcen = x_domain_beg_glb - (x_domain_end_glb - x_centroid)
+                else 
+                    x_pcen = x_centroid
+                end if
+                if ((y_centroid - y_domain_beg_glb) <= radius) then
+                    y_pcen = y_domain_end_glb + (y_centroid - y_domain_beg_glb)
+                else if ((y_domain_end_glb - y_centroid) <= radius) then 
+                    y_pcen = y_domain_beg_glb - (y_domain_end_glb - y_centroid)
+                else 
+                    y_pcen = y_centroid
+                end if
+                if ((z_centroid - z_domain_beg_glb) <= radius) then
+                    z_pcen = z_domain_end_glb + (z_centroid - z_domain_beg_glb)
+                else if ((z_domain_end_glb - z_centroid) <= radius) then 
+                    z_pcen = z_domain_beg_glb - (z_domain_end_glb - z_centroid)
+                else 
+                    z_pcen = z_centroid
+                end if
+                dist_vec(1) = x_cc(i) - x_centroid
+                dist_vec(2) = y_cc(j) - y_centroid
+                dist_vec(3) = z_cc(k) - z_centroid
+                dist_calc = sqrt(sum(dist_vec**2))
+                ! all permutations of periodically projected ib
+                if (periodic_ibs) then
+                    dist_vec_per(1, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(1, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(1, 3) = z_cc(k) - z_pcen
+                    dist_per(1) = sqrt(sum(dist_vec_per(1, :)**2))
+                    if (dist_per(1) < dist_calc) then    
+                        dist_calc = dist_per(1)
+                        dist_vec = dist_vec_per(1, :)
+                    end if 
+                    dist_vec_per(2, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(2, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(2, 3) = z_cc(k) - z_pcen
+                    dist_per(2) = sqrt(sum(dist_vec_per(2, :)**2))
+                    if (dist_per(2) < dist_calc) then    
+                        dist_calc = dist_per(2)
+                        dist_vec = dist_vec_per(2, :)
+                    end if
+                    dist_vec_per(3, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(3, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(3, 3) = z_cc(k) - z_centroid
+                    dist_per(3) = sqrt(sum(dist_vec_per(3, :)**2))
+                    if (dist_per(3) < dist_calc) then    
+                        dist_calc = dist_per(3)
+                        dist_vec = dist_vec_per(3, :)
+                    end if
+                    dist_vec_per(4, 1) = x_cc(i) - x_pcen 
+                    dist_vec_per(4, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(4, 3) = z_cc(k) - z_centroid
+                    dist_per(4) = sqrt(sum(dist_vec_per(4, :)**2))
+                    if (dist_per(4) < dist_calc) then    
+                        dist_calc = dist_per(4)
+                        dist_vec = dist_vec_per(4, :)
+                    end if
+                    dist_vec_per(5, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(5, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(5, 3) = z_cc(k) - z_pcen
+                    dist_per(5) = sqrt(sum(dist_vec_per(5, :)**2))
+                    if (dist_per(5) < dist_calc) then    
+                        dist_calc = dist_per(5)
+                        dist_vec = dist_vec_per(5, :)
+                    end if
+                    dist_vec_per(6, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(6, 2) = y_cc(j) - y_pcen
+                    dist_vec_per(6, 3) = z_cc(k) - z_centroid
+                    dist_per(6) = sqrt(sum(dist_vec_per(6, :)**2))
+                    if (dist_per(6) < dist_calc) then    
+                        dist_calc = dist_per(6)
+                        dist_vec = dist_vec_per(6, :)
+                    end if
+                    dist_vec_per(7, 1) = x_cc(i) - x_centroid
+                    dist_vec_per(7, 2) = y_cc(j) - y_centroid
+                    dist_vec_per(7, 3) = z_cc(k) - z_pcen
+                    dist_per(7) = sqrt(sum(dist_vec_per(7, :)**2))
+                    if (dist_per(7) < dist_calc) then    
+                        dist_calc = dist_per(7)
+                        dist_vec = dist_vec_per(7, :)
+                    end if
+                end if
+                dist = abs(dist_calc - radius)
+                if (dist_calc == 0) then
+                    norm(:) = (/1, 0, 0/)
+                else
+                    norm(:) = dist_vec(:)/dist_calc
+                end if
+
+            end if ! end store_levelset if statement
             ghost_points(q)%ip_loc(:) = physical_loc(:) + 2*dist*norm(:)
 
             ! Find the closest grid point to the image point

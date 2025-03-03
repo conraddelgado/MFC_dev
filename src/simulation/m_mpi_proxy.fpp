@@ -196,7 +196,7 @@ contains
             & 'cfl_adap_dt', 'cfl_const_dt', 'cfl_dt', 'surface_tension',        &
             & 'viscous', 'shear_stress', 'bulk_stress', 'bubbles_lagrange',     &
             & 'hyperelasticity', 'rkck_adap_dt', 'periodic_forcing', 'periodic_ibs', &
-            & 'compute_CD_vi', 'compute_CD_si', 'fourier_transform_filtering' ]
+            & 'compute_CD_vi', 'compute_CD_si', 'fourier_transform_filtering', 'store_levelset' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 

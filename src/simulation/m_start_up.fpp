@@ -175,7 +175,8 @@ contains
             periodic_forcing, periodic_ibs, &
             compute_CD_vi, compute_CD_si, & 
             fourier_transform_filtering, &
-            u_inf_ref, rho_inf_ref, T_inf_ref
+            u_inf_ref, rho_inf_ref, T_inf_ref, &
+            store_levelset
 
         ! Checking that an input file has been provided by the user. If it
         ! has, then the input file is read in, otherwise, simulation exits.
