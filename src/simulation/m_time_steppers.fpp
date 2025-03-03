@@ -733,8 +733,10 @@ contains
             call s_apply_fftw_explicit_filter(q_cons_ts(1)%vf, q_filtered, volfrac_phi)
         end if
         write(103) q_filtered(2)%sf(:, :, :) !q_filtered(sys_size+1)%sf(:, :, :)
-        print *, q_filtered(2)%sf(10, 10, 10)
         print *, 'done filtering.'
+        if (fourier_transform_filtering) then 
+            call s_compute_unclosed_terms_explicit(q_filtered)
+        end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
         rhs_rhouu, du_dxyz)
@@ -1369,6 +1371,11 @@ contains
         end do
 
     end subroutine s_add_periodic_forcing
+
+    subroutine s_compute_unclosed_terms_explicit(q_filtered)
+        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_filtered
+
+    end subroutine s_compute_unclosed_terms_explicit
 
     !> Strang splitting scheme with 3rd order TVD RK time-stepping algorithm for
         !!      the flux term and adaptive time stepping algorithm for

@@ -219,6 +219,7 @@ contains
 
         integer :: i, j, k, l
 
+        ! conservative variables volume filtering
         do l = 1, sys_size
             do i = 0, m
                 do j = 0, n 
