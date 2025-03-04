@@ -88,8 +88,10 @@ contains
 
         allocate (ib_markers%sf(0:m, 0:n, 0:p))
 
-        allocate (levelset%sf(0:m, 0:n, 0:p, 1:num_ibs))
-        allocate (levelset_norm%sf(0:m, 0:n, 0:p, 1:num_ibs, 1:3))
+        if (store_levelset) then 
+            allocate (levelset%sf(0:m, 0:n, 0:p, 1:num_ibs))
+            allocate (levelset_norm%sf(0:m, 0:n, 0:p, 1:num_ibs, 1:3))
+        end if
 
         if (qbmm .and. .not. polytropic) then
             !Allocate bubble pressure pb and vapor mass mv for non-polytropic qbmm at all quad nodes and R0 bins
@@ -206,7 +208,9 @@ contains
 
                 if (patch_ib(i)%geometry == 8) then
                     call s_sphere(i, ib_markers%sf, q_prim_vf, ib)
-                    call s_sphere_levelset(levelset, levelset_norm, i)
+                    if (store_levelset) then 
+                        call s_sphere_levelset(levelset, levelset_norm, i)
+                    end if
                     ! Cylindrical patch
                 elseif (patch_ib(i)%geometry == 10) then
                     call s_cylinder(i, ib_markers%sf, q_prim_vf, ib)

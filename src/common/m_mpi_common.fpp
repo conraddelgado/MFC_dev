@@ -162,14 +162,18 @@ contains
 
 #ifdef MFC_PRE_PROCESS
             MPI_IO_IB_DATA%var%sf => ib_markers%sf
-            MPI_IO_levelset_DATA%var%sf => levelset%sf
-            MPI_IO_levelsetnorm_DATA%var%sf => levelset_norm%sf
+            if (store_levelset) then 
+                MPI_IO_levelset_DATA%var%sf => levelset%sf
+                MPI_IO_levelsetnorm_DATA%var%sf => levelset_norm%sf
+            end if
 #else
             MPI_IO_IB_DATA%var%sf => ib_markers%sf(0:m, 0:n, 0:p)
 
 #ifndef MFC_POST_PROCESS
-            MPI_IO_levelset_DATA%var%sf => levelset%sf(0:m, 0:n, 0:p, 1:num_ibs)
-            MPI_IO_levelsetnorm_DATA%var%sf => levelset_norm%sf(0:m, 0:n, 0:p, 1:num_ibs, 1:3)
+            if (store_levelset) then
+                MPI_IO_levelset_DATA%var%sf => levelset%sf(0:m, 0:n, 0:p, 1:num_ibs)
+                MPI_IO_levelsetnorm_DATA%var%sf => levelset_norm%sf(0:m, 0:n, 0:p, 1:num_ibs, 1:3)
+            end if
 #endif
 
 #endif

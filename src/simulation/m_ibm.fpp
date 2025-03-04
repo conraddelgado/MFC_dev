@@ -68,19 +68,19 @@ contains
         if (p > 0) then
             @:ALLOCATE(ib_markers%sf(-gp_layers:m+gp_layers, &
                 -gp_layers:n+gp_layers, -gp_layers:p+gp_layers))
-            @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
-                -gp_layers:n+gp_layers, -gp_layers:p+gp_layers, num_ibs))
-            @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
-                -gp_layers:n+gp_layers, -gp_layers:p+gp_layers, num_ibs, 3))
+            if (store_levelset) then
+                @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
+                    -gp_layers:n+gp_layers, -gp_layers:p+gp_layers, num_ibs))
+                @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
+                    -gp_layers:n+gp_layers, -gp_layers:p+gp_layers, num_ibs, 3))
+            end if
         else
             @:ALLOCATE(ib_markers%sf(-gp_layers:m+gp_layers, &
                 -gp_layers:n+gp_layers, 0:0))
-            if (store_levelset) then
-                @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
-                    -gp_layers:n+gp_layers, 0:0, num_ibs))
-                @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
-                    -gp_layers:n+gp_layers, 0:0, num_ibs, 3))
-            end if
+            @:ALLOCATE(levelset%sf(-gp_layers:m+gp_layers, &
+                -gp_layers:n+gp_layers, 0:0, num_ibs))
+            @:ALLOCATE(levelset_norm%sf(-gp_layers:m+gp_layers, &
+                -gp_layers:n+gp_layers, 0:0, num_ibs, 3))
         end if
 
         @:ACC_SETUP_SFs(ib_markers)
@@ -1103,8 +1103,10 @@ contains
         integer :: i
 
         @:DEALLOCATE(ib_markers%sf)
-        @:DEALLOCATE(levelset%sf)
-        @:DEALLOCATE(levelset_norm%sf)
+        if (store_levelset) then
+            @:DEALLOCATE(levelset%sf)
+            @:DEALLOCATE(levelset_norm%sf)
+        end if
 
         if (compute_CD_si) then
             @:DEALLOCATE(num_sphere_markers)

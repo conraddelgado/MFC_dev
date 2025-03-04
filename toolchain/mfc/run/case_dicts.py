@@ -93,6 +93,7 @@ PRE_PROCESS.update({
     'n_start_old': ParamType.INT,
     'surface_tension': ParamType.LOG,
     'periodic_ibs': ParamType.LOG,
+    'store_levelset': ParamType.LOG,
 })
 
 for ib_id in range(1, 1000+1):

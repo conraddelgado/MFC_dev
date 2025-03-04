@@ -249,6 +249,7 @@ module m_global_parameters
     type(pres_field) :: mv
 
     logical :: periodic_ibs !< immersed boundaries respect periodicity of domain
+    logical :: store_levelset 
 
 contains
 
@@ -492,6 +493,7 @@ contains
         rkck_adap_dt = .false.
 
         periodic_ibs = .false.
+        store_levelset = .true.
 
     end subroutine s_assign_default_values_to_user_inputs
 
