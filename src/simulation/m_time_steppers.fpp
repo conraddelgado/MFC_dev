@@ -1050,7 +1050,7 @@ contains
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
         C_D = F_D_global(1) / (0.5_wp * rho_inf_ref * (u_inf_ref**2) * pi * (patch_ib(1)%radius**2))
 
-        !print *, 'C_D (vi): ', C_D
+        print *, 'C_D (vi): ', C_D
         write(100) F_D_global  
 
     end subroutine s_compute_dragforce_vi

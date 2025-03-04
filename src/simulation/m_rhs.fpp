@@ -821,8 +821,7 @@ contains
                                                  q_cons_qp, &
                                                  q_prim_qp, &
                                                  flux_src_n(id), & 
-                                                 rhs_rhouu, & 
-                                                 q_prim_vf)
+                                                 rhs_rhouu)
             call nvtxEndRange
 
             ! RHS additions for hypoelasticity
@@ -942,7 +941,7 @@ contains
 
     end subroutine s_compute_rhs
 
-    subroutine s_compute_advection_source_term(idir, rhs_vf, q_cons_vf, q_prim_vf, flux_src_n_vf, rhs_rhouu, q_prim_calc)
+    subroutine s_compute_advection_source_term(idir, rhs_vf, q_cons_vf, q_prim_vf, flux_src_n_vf, rhs_rhouu)
 
         integer, intent(in) :: idir
         type(scalar_field), dimension(sys_size), intent(inout) :: rhs_vf
@@ -954,7 +953,6 @@ contains
 
         ! variables for drag calculation
         type(scalar_field), dimension(sys_size), intent(inout) :: rhs_rhouu
-        type(scalar_field), dimension(sys_size), intent(in) :: q_prim_calc
 
         if (alt_soundspeed) then
             !$acc parallel loop collapse(3) gang vector default(present)
@@ -1013,9 +1011,9 @@ contains
                         do k = 0, p
                             rhs_rhouu(2)%sf(i, j, k) = 1._wp/dx(i) * &
                                                     (flux_n(1)%vf(2)%sf(i - 1, j, k) &
-                                                        - q_prim_calc(1)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k)*q_prim_calc(2)%sf(i - 1, j, k) &
+                                                        - q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf%vf(2)%sf(i - 1, j, k)/q_cons_vf%vf(1)%sf(i - 1, j, k) &
                                                         - (flux_n(1)%vf(2)%sf(i, j, k) & 
-                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                                                        - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
                         end do 
                     end do
                 end do
@@ -1139,9 +1137,9 @@ contains
                         do k = 0, p
                             rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dy(j) * &
                                                     (flux_n(2)%vf(2)%sf(i, j - 1, k) &
-                                                        - q_prim_calc(1)%sf(i , j - 1, k)*q_prim_calc(3)%sf(i , j - 1, k)*q_prim_calc(2)%sf(i , j - 1, k) &
+                                                        - q_cons_vf%vf(3)%sf(i , j - 1, k)*q_cons_vf%vf(2)%sf(i , j - 1, k)/q_cons_vf%vf(1)%sf(i , j - 1, k) &
                                                         - (flux_n(2)%vf(2)%sf(i, j, k) & 
-                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(3)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                                                        - q_cons_vf%vf(3)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
                         end do 
                     end do
                 end do
@@ -1361,9 +1359,9 @@ contains
                         do k = 0, p
                             rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dz(k) * &
                                                     (flux_n(3)%vf(2)%sf(i, j, k - 1) &
-                                                        - q_prim_calc(1)%sf(i , j, k - 1)*q_prim_calc(4)%sf(i , j, k - 1)*q_prim_calc(2)%sf(i , j, k - 1) &
+                                                        - q_cons_vf%vf(4)%sf(i , j, k - 1)*q_cons_vf%vf(2)%sf(i , j, k - 1)/q_cons_vf%vf(1)%sf(i , j, k - 1) &
                                                         - (flux_n(3)%vf(2)%sf(i, j, k) & 
-                                                        - q_prim_calc(1)%sf(i, j, k)*q_prim_calc(4)%sf(i, j, k)*q_prim_calc(2)%sf(i, j, k)))                   
+                                                        - q_cons_vf%vf(4)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
                         end do 
                     end do
                 end do
