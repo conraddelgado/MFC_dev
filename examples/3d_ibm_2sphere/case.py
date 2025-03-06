@@ -143,6 +143,7 @@ case_dict = {
     "u_inf_ref": v1,
     "rho_inf_ref": rho,
     "T_inf_ref": T,
+    "mu_visc": mu,
 
     "store_levelset": "F",
     }

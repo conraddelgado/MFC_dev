@@ -12,7 +12,20 @@ X, Y = np.meshgrid(x, y)
 fig, ax = plt.subplots()
 plt.contourf(X, Y, Ru[:, :, N//2], levels=80)
 plt.title(r'Pseudo-Turbulent Reynolds Stress')
-plt.colorbar(label=r'$|\nabla\cdot(\alpha R_u)|$')
+plt.colorbar(label=r'$|\nabla\cdot R_u|$')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.tight_layout()
+plt.savefig(f'Ru_plot', dpi=300)
+plt.show()
+plt.close()
+
+R_mu = np.fromfile('../examples/phi005/R_mu.bin', dtype=np.float64)
+R_mu = R_mu.reshape(N, N, N, order='F')
+fig, ax = plt.subplots()
+plt.contourf(X, Y, R_mu[:, :, N//2], levels=80)
+plt.title(r'Pseudo-Turbulent Reynolds Stress')
+plt.colorbar(label=r'$|\nabla\cdot R_\mu|$')
 plt.xlabel('x')
 plt.ylabel('y')
 plt.tight_layout()
@@ -53,7 +66,7 @@ plt.close()
 ################ verification ################
 
 L = 0.5
-N = 100
+N = 64
 q_filtered = np.fromfile('../examples/phi005/q_filtered.bin', dtype=np.float64)
 q_filtered = q_filtered.reshape((N, N, N, -1), order='F')
 print(np.shape(q_filtered))

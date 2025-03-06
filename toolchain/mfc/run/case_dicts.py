@@ -257,6 +257,7 @@ SIMULATION.update({
     'u_inf_ref': ParamType.REAL,
     'rho_inf_ref': ParamType.REAL,
     'T_inf_ref': ParamType.REAL,
+    'mu_visc': ParamType.REAL, 
     'store_levelset':ParamType.LOG,
 })
 

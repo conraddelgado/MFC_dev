@@ -175,7 +175,7 @@ contains
             periodic_forcing, periodic_ibs, &
             compute_CD_vi, compute_CD_si, & 
             fourier_transform_filtering, &
-            u_inf_ref, rho_inf_ref, T_inf_ref, &
+            u_inf_ref, rho_inf_ref, T_inf_ref, mu_visc, &
             store_levelset
 
         ! Checking that an input file has been provided by the user. If it
@@ -1636,7 +1636,7 @@ contains
             !$acc update device(ib_markers%sf)
         end if
 
-        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref)
+        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref, mu_visc)
 
     end subroutine s_initialize_gpu_vars
 

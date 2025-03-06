@@ -160,6 +160,7 @@ module m_global_parameters
     real(wp) :: u_inf_ref !< reference freestream velocity
     real(wp) :: rho_inf_ref !< reference freestream density 
     real(wp) :: T_inf_ref !< reference freestream temperature
+    real(wp) :: mu_visc 
 
     logical :: store_levelset !< store levelset and levelset_norm data, if false: compute levelset on fly
 
@@ -183,7 +184,7 @@ module m_global_parameters
     #:endif
 
     !$acc declare create(mpp_lim, model_eqns, mixture_err, alt_soundspeed, avg_state, mp_weno, weno_eps, teno_CT, hypoelasticity, hyperelasticity, hyper_model, elasticity, low_Mach, viscous, shear_stress, bulk_stress)
-    !$acc declare create(u_inf_ref, rho_inf_ref, T_inf_ref)
+    !$acc declare create(u_inf_ref, rho_inf_ref, T_inf_ref, mu_visc)
 
     logical :: relax          !< activate phase change
     integer :: relax_model    !< Relaxation model
@@ -560,6 +561,7 @@ contains
         u_inf_ref = dflt_real
         rho_inf_ref = dflt_real
         T_inf_ref = dflt_real
+        mu_visc = dflt_real
 
         store_levelset = .true.
 
@@ -757,7 +759,7 @@ contains
         integer :: i, j, k
         integer :: fac
 
-        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref)
+        !$acc update device(u_inf_ref, rho_inf_ref, T_inf_ref, mu_visc)
 
         #:if not MFC_CASE_OPTIMIZATION
             ! Determining the degree of the WENO polynomials
