@@ -91,12 +91,13 @@ module m_time_steppers
 
     ! filtering variables
     type(scalar_field), allocatable, dimension(:) :: q_filtered
+    type(vector_field), allocatable, dimension(:) :: pt_Re_stress
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
     !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
-    !$acc declare create(q_filtered)
+    !$acc declare create(q_filtered, pt_Re_stress)
 
 contains
 
@@ -313,10 +314,12 @@ contains
 
         ! allocating drag calculation variables
         if (compute_CD_vi) then
-            @:ALLOCATE(rhs_rhouu(1:sys_size))
+            @:ALLOCATE(rhs_rhouu(momxb:momxe))
 
-            do i = 1, sys_size
-                @:ALLOCATE(rhs_rhouu(i)%sf(0:m, 0:n, 0:p))
+            do i = momxb, momxe
+                @:ALLOCATE(rhs_rhouu(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                    idwbuff(2)%beg:idwbuff(2)%end, &
+                    idwbuff(3)%beg:idwbuff(3)%end))
                 @:ACC_SETUP_SFs(rhs_rhouu(i))
             end do
 
@@ -379,6 +382,20 @@ contains
             do i = 1, sys_size+1
                 @:ALLOCATE(q_filtered(i)%sf(0:m, 0:n, 0:p))
                 @:ACC_SETUP_SFs(q_filtered(i))
+            end do
+
+            @:ALLOCATE(pt_Re_stress(1:num_dims))
+            do i = 1, num_dims
+                @:ALLOCATE(pt_Re_stress(i)%vf(1:num_dims))
+            end do
+
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:ALLOCATE(pt_Re_stress(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                        idwbuff(2)%beg:idwbuff(2)%end, &
+                        idwbuff(3)%beg:idwbuff(3)%end))
+                end do
+                @:ACC_SETUP_VFs(pt_Re_stress(i))
             end do
         end if
 
@@ -725,17 +742,21 @@ contains
 
         if (periodic_forcing) then 
             call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
-            call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
+            call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_bar, q_periodic_force)
+        end if
+
+        if (fourier_transform_filtering) then 
+            call s_setup_terms_filtering(q_cons_ts(1)%vf, pt_Re_stress)
         end if
 
         print *, 'filtering...'
         if (fourier_transform_filtering) then
-            call s_apply_fftw_explicit_filter(q_cons_ts(1)%vf, q_filtered, volfrac_phi)
+            call s_apply_fftw_filter_scalar(q_cons_ts(1)%vf, q_filtered, volfrac_phi, pt_Re_stress)
         end if
         write(103) q_filtered(2)%sf(:, :, :) !q_filtered(sys_size+1)%sf(:, :, :)
         print *, 'done filtering.'
         if (fourier_transform_filtering) then 
-            call s_compute_unclosed_terms_explicit(q_filtered)
+            call s_pseudo_turbulent_reynolds_stress(q_filtered, pt_Re_stress)
         end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
@@ -1014,7 +1035,7 @@ contains
 
     ! computes the drag force for every immersed boundary using the volume integral formulation
     subroutine s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
-        type(scalar_field), dimension(sys_size), intent(in) :: rhs_rhouu
+        type(scalar_field), dimension(momxb:momxe), intent(in) :: rhs_rhouu
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         real(wp), dimension(1:num_ibs) :: F_D_global
         real(wp) :: C_D
@@ -1031,9 +1052,9 @@ contains
             do j = 0, n
                 do k = 0, p 
                     if (ib_markers%sf(i, j, k) /= 0) then 
-                        
+
                         !$acc atomic 
-                        F_D_vi(ib_markers%sf(i, j, k)) = F_D_vi(ib_markers%sf(i, j, k)) + rhs_rhouu(2)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
+                        F_D_vi(ib_markers%sf(i, j, k)) = F_D_vi(ib_markers%sf(i, j, k)) + rhs_rhouu(momxb)%sf(i, j, k) * dx(i) * dy(j) * dz(k)
                     
                     end if
                 end do 
@@ -1050,7 +1071,7 @@ contains
         ! calculate C_D, C_D = F_D/(1/2 * rho * Uinf^2 * A)
         C_D = F_D_global(1) / (0.5_wp * rho_inf_ref * (u_inf_ref**2) * pi * (patch_ib(1)%radius**2))
 
-        print *, 'C_D (vi): ', C_D
+        !print *, 'C_D (vi): ', C_D
         write(100) F_D_global  
 
     end subroutine s_compute_dragforce_vi
@@ -1316,10 +1337,8 @@ contains
     end subroutine s_compute_phase_average
 
     ! computes the periodic forcing terms described in Khalloufi and Capecelatro
-    subroutine s_compute_periodic_forcing(q_cons_vf, q_T_sf, q_prim_vf, q_bar, q_periodic_force)
+    subroutine s_compute_periodic_forcing(q_cons_vf, q_bar, q_periodic_force)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), intent(inout) :: q_T_sf
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar
         type(scalar_field), dimension(1:8), intent(inout) :: q_periodic_force
 
@@ -1371,6 +1390,90 @@ contains
         end do
 
     end subroutine s_add_periodic_forcing
+
+    subroutine s_setup_terms_filtering(q_cons_vf, rho_u_outer_u)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
+        type(vector_field), dimension(1:num_dims) :: rho_u_outer_u
+        integer :: i, j, k, l, q
+
+            do l = 1, num_dims
+                do q = 1, num_dims
+                    do i = 0, m
+                        do j = 0, n
+                            do k = 0, p
+                                rho_u_outer_u(l)%vf(q)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_cons_vf(momxb-1+l)%sf(i, j, k)*q_cons_vf(momxb-1+q)%sf(i, j, k)) ! rho*u(outerproduct)u
+                            end do
+                        end do
+                    end do
+                end do 
+            end do
+
+
+    end subroutine s_setup_terms_filtering
+
+    subroutine s_pseudo_turbulent_reynolds_stress(q_filtered, pt_Re_stress)
+        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_filtered
+        type(vector_field), dimension(1:num_dims) :: pt_Re_stress
+        real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_alpha_Ru
+        real(wp), dimension(0:m, 0:n, 0:p) :: mag_div_alpha_Ru
+        real(wp) :: temp
+        integer :: i, j, k, l, q
+
+        do l = 1, num_dims
+            do q = 1, num_dims
+                do i = 0, m
+                    do j = 0, n 
+                        do k = 0, p
+                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = q_filtered(1)%sf(i, j, k)*(pt_Re_stress(l)%vf(q)%sf(i, j, k)/q_filtered(1)%sf(i, j, k) &
+                                                                - q_filtered(momxb-1+l)%sf(i, j, k)/q_filtered(1)%sf(i, j, k) * q_filtered(momxb-1+q)%sf(i, j, k)/q_filtered(1)%sf(i, j, k))
+                        end do
+                    end do
+                end do
+            end do
+        end do         
+
+        ! set boundary buffer zone values
+        do l = 1, num_dims
+            do q = 1, num_dims
+                pt_Re_stress(l)%vf(q)%sf(-buff_size:-1, :, :) = pt_Re_stress(l)%vf(q)%sf(m-buff_size+1:m, :, :)
+                pt_Re_stress(l)%vf(q)%sf(m+1:m+buff_size, :, :) = pt_Re_stress(l)%vf(q)%sf(0:buff_size-1, :, :)
+
+                pt_Re_stress(l)%vf(q)%sf(:, -buff_size:-1, :) = pt_Re_stress(l)%vf(q)%sf(:, m-buff_size+1:m, :)
+                pt_Re_stress(l)%vf(q)%sf(:, m+1:m+buff_size, :) = pt_Re_stress(l)%vf(q)%sf(:, 0:buff_size-1, :)
+
+                pt_Re_stress(l)%vf(q)%sf(:, :, -buff_size:-1) = pt_Re_stress(l)%vf(q)%sf(:, :, m-buff_size+1:m)
+                pt_Re_stress(l)%vf(q)%sf(:, :, m+1:m+buff_size) = pt_Re_stress(l)%vf(q)%sf(:, :, 0:buff_size-1)
+            end do
+        end do
+
+        ! div(alpha*Ru), using CD2 FD scheme 
+        do l = 1, num_dims
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        div_alpha_Ru(l, i, j, k) = (1._wp - volfrac_phi) & 
+                             * (pt_Re_stress(l)%vf(1)%sf(i+1, j, k) - pt_Re_stress(l)%vf(1)%sf(i-1, j, k))/(2*dx(i)) &
+                             + (pt_Re_stress(l)%vf(2)%sf(i, j+1, k) - pt_Re_stress(l)%vf(2)%sf(i, j-1, k))/(2*dy(j)) & 
+                             + (pt_Re_stress(l)%vf(3)%sf(i, j, k+1) - pt_Re_stress(l)%vf(3)%sf(i, j, k-1))/(2*dz(k))
+                    end do
+                end do
+            end do
+        end do
+
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p 
+                    mag_div_alpha_Ru(i, j, k) = sqrt(sum(div_alpha_Ru(:, i, j, k)**2))
+                end do
+            end do
+        end do
+
+        open(unit=104, file='Ru.bin', status='replace', form='unformatted', access='stream')
+        write(104) mag_div_alpha_Ru
+        close(104)
+
+    end subroutine s_pseudo_turbulent_reynolds_stress
+
 
     subroutine s_compute_unclosed_terms_explicit(q_filtered)
         type(scalar_field), dimension(sys_size+1), intent(inout) :: q_filtered
@@ -1780,7 +1883,7 @@ contains
         end if
 
         if (compute_CD_vi) then
-            do i = 1, sys_size
+            do i = momxb, momxe
                 @:DEALLOCATE(rhs_rhouu(i)%sf)
             end do 
             @:DEALLOCATE(rhs_rhouu)
@@ -1826,6 +1929,14 @@ contains
                 @:DEALLOCATE(q_filtered(i)%sf)
             end do
             @:DEALLOCATE(q_filtered)
+
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:DEALLOCATE(pt_Re_stress(i)%vf(j)%sf)
+                end do
+                @:DEALLOCATE(pt_Re_stress(i)%vf)
+            end do
+            @:DEALLOCATE(pt_Re_stress)
         end if
         
         if (compute_CD_vi) then

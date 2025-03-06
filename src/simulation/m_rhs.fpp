@@ -617,7 +617,7 @@ contains
         integer :: i, j, k, l, id !< Generic loop iterators
 
         ! variables for drag calculation
-        type(scalar_field), dimension(sys_size), intent(inout) :: rhs_rhouu
+        type(scalar_field), dimension(momxb:momxe), intent(inout) :: rhs_rhouu
         type(vector_field), dimension(1:3), intent(inout) :: du_dxyz
 
         call nvtxStartRange("COMPUTE-RHS")
@@ -952,7 +952,7 @@ contains
         integer :: i, j, k, l, q
 
         ! variables for drag calculation
-        type(scalar_field), dimension(sys_size), intent(inout) :: rhs_rhouu
+        type(scalar_field), dimension(momxb:momxe), intent(inout) :: rhs_rhouu
 
         if (alt_soundspeed) then
             !$acc parallel loop collapse(3) gang vector default(present)
@@ -1005,16 +1005,18 @@ contains
 
             ! drag calculation loop, x-dir
             if (compute_CD_vi) then
-                !$acc parallel loop collapse(3) gang vector default(present)
-                do i = 0, m
-                    do j = 0, n 
-                        do k = 0, p
-                            rhs_rhouu(2)%sf(i, j, k) = 1._wp/dx(i) * &
-                                                    (flux_n(1)%vf(2)%sf(i - 1, j, k) &
-                                                        - q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf%vf(2)%sf(i - 1, j, k)/q_cons_vf%vf(1)%sf(i - 1, j, k) &
-                                                        - (flux_n(1)%vf(2)%sf(i, j, k) & 
-                                                        - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
-                        end do 
+                !$acc parallel loop collapse(4) gang vector default(present)
+                do l = momxb, momxe
+                    do i = 0, m
+                        do j = 0, n 
+                            do k = 0, p
+                                rhs_rhouu(l)%sf(i, j, k) = 1._wp/dx(i) * &
+                                                        (flux_n(1)%vf(l)%sf(i - 1, j, k) &
+                                                            - q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf%vf(l)%sf(i - 1, j, k)/q_cons_vf%vf(1)%sf(i - 1, j, k) &
+                                                            - (flux_n(1)%vf(l)%sf(i, j, k) & 
+                                                            - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k))) 
+                            end do 
+                        end do
                     end do
                 end do
             end if
@@ -1131,16 +1133,18 @@ contains
 
             ! drag calculation loop, y-dir
             if (compute_CD_vi) then
-                !$acc parallel loop collapse(3) gang vector default(present)
-                do i = 0, m
-                    do j = 0, n 
-                        do k = 0, p
-                            rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dy(j) * &
-                                                    (flux_n(2)%vf(2)%sf(i, j - 1, k) &
-                                                        - q_cons_vf%vf(3)%sf(i , j - 1, k)*q_cons_vf%vf(2)%sf(i , j - 1, k)/q_cons_vf%vf(1)%sf(i , j - 1, k) &
-                                                        - (flux_n(2)%vf(2)%sf(i, j, k) & 
-                                                        - q_cons_vf%vf(3)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
-                        end do 
+                !$acc parallel loop collapse(4) gang vector default(present)
+                do l = momxb, momxe
+                    do i = 0, m
+                        do j = 0, n 
+                            do k = 0, p
+                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dy(j) * &
+                                                        (flux_n(2)%vf(l)%sf(i, j - 1, k) &
+                                                            - q_cons_vf%vf(3)%sf(i , j - 1, k)*q_cons_vf%vf(l)%sf(i , j - 1, k)/q_cons_vf%vf(1)%sf(i , j - 1, k) &
+                                                            - (flux_n(2)%vf(l)%sf(i, j, k) & 
+                                                            - q_cons_vf%vf(3)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
+                            end do 
+                        end do
                     end do
                 end do
             end if
@@ -1353,16 +1357,18 @@ contains
 
             ! drag calculation loop, z-dir
             if (compute_CD_vi) then
-                !$acc parallel loop collapse(3) gang vector default(present)
-                do i = 0, m
-                    do j = 0, n 
-                        do k = 0, p
-                            rhs_rhouu(2)%sf(i, j, k) = rhs_rhouu(2)%sf(i, j, k) + 1._wp/dz(k) * &
-                                                    (flux_n(3)%vf(2)%sf(i, j, k - 1) &
-                                                        - q_cons_vf%vf(4)%sf(i , j, k - 1)*q_cons_vf%vf(2)%sf(i , j, k - 1)/q_cons_vf%vf(1)%sf(i , j, k - 1) &
-                                                        - (flux_n(3)%vf(2)%sf(i, j, k) & 
-                                                        - q_cons_vf%vf(4)%sf(i, j, k)*q_cons_vf%vf(2)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
-                        end do 
+                !$acc parallel loop collapse(4) gang vector default(present)
+                do l = momxb, momxe
+                    do i = 0, m
+                        do j = 0, n 
+                            do k = 0, p
+                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dz(k) * &
+                                                        (flux_n(3)%vf(l)%sf(i, j, k - 1) &
+                                                            - q_cons_vf%vf(4)%sf(i , j, k - 1)*q_cons_vf%vf(l)%sf(i , j, k - 1)/q_cons_vf%vf(1)%sf(i , j, k - 1) &
+                                                            - (flux_n(3)%vf(l)%sf(i, j, k) & 
+                                                            - q_cons_vf%vf(4)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))     
+                            end do 
+                        end do
                     end do
                 end do
             end if

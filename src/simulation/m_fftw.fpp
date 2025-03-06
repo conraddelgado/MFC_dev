@@ -31,7 +31,7 @@ module m_fftw
  s_apply_fourier_filter, &
  s_finalize_fftw_module, & 
  s_initialize_fftw_explicit_filter_module, &
- s_apply_fftw_explicit_filter, & 
+ s_apply_fftw_filter_scalar, & 
  s_initialize_gaussian_filter, & 
  s_finalize_fftw_explicit_filter_module
 
@@ -211,13 +211,14 @@ contains
 
     end subroutine s_initialize_gaussian_filter
 
-    subroutine s_apply_fftw_explicit_filter(q_cons_vf, q_filtered, volfrac_phi)
+    subroutine s_apply_fftw_filter_scalar(q_cons_vf, q_filtered, volfrac_phi, pt_Re_stress)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(scalar_field), dimension(sys_size+1), intent(inout) :: q_filtered
+        type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
 
         real(dp) :: volfrac_phi
 
-        integer :: i, j, k, l
+        integer :: i, j, k, l, q
 
         ! conservative variables volume filtering
         do l = 1, sys_size
@@ -264,7 +265,33 @@ contains
 
         q_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
 
-    end subroutine s_apply_fftw_explicit_filter
+        ! volume filter rho*u(outerproduct)u -> used in pseudo turbulent Reynolds stress
+        do l = 1, num_dims
+            do q = 1, num_dims
+                do i = 0, m
+                    do j = 0, n 
+                        do k = 0, p
+                            if (ib_markers%sf(i, j, k) == 0) then
+                                array_in(i+1, j+1, k+1) = pt_Re_stress(l)%vf(q)%sf(i, j, k)
+                            else
+                                array_in(i+1, j+1, k+1) = 0_dp
+                            end if
+                        end do 
+                    end do
+                end do
+
+                call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+
+                array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+                call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
+
+            end do
+        end do 
+
+    end subroutine s_apply_fftw_filter_scalar
 
     !>  The purpose of this subroutine is to apply a Fourier low-
         !!      pass filter to the flow variables in the azimuthal direction

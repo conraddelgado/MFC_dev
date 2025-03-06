@@ -2,6 +2,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import erf
 
+N = 64
+Ru = np.fromfile('../examples/phi005/Ru.bin', dtype=np.float64)
+Ru = Ru.reshape(N, N, N, order='F')
+L = 0.5
+x = np.linspace(-L, L, N)
+y = np.linspace(-L, L, N)
+X, Y = np.meshgrid(x, y)
+fig, ax = plt.subplots()
+plt.contourf(X, Y, Ru[:, :, N//2], levels=80)
+plt.title(r'Pseudo-Turbulent Reynolds Stress')
+plt.colorbar(label=r'$|\nabla\cdot(\alpha R_u)|$')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.tight_layout()
+plt.savefig(f'Ru_plot', dpi=300)
+plt.show()
+plt.close()
+
+
 # visualize filter
 D = 0.1
 L = 0.2
@@ -88,7 +107,7 @@ for m in sigma_range:
     plt.ylabel('y')
     ax.add_patch(sphere_outline)
     plt.tight_layout()
-    plt.savefig(f'filtere_volfrac_{m}', dpi=300)
+    plt.savefig(f'filtered_volfrac_{m}', dpi=300)
     plt.show()
     plt.close()
     
