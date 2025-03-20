@@ -29,7 +29,7 @@ module m_data_input
  s_read_parallel_data_files, &
  s_populate_grid_variables_buffer_regions, &
  s_populate_conservative_variables_buffer_regions, &
- s_finalize_data_input_module
+ s_finalize_data_input_module, s_populate_filtered_variables_buffer_regions
 
     abstract interface
 
@@ -59,6 +59,8 @@ module m_data_input
 
     ! type(scalar_field), public :: ib_markers !<
     type(integer_field), public :: ib_markers
+
+    type(scalar_field), allocatable, dimension(:), public :: q_cons_filtered
 
     procedure(s_read_abstract_data_files), pointer :: s_read_data_files => null()
 
@@ -454,7 +456,11 @@ contains
 
                 ! Initialize MPI data I/O
                 if (ib) then
-                    call s_initialize_mpi_data(q_cons_vf, ib_markers)
+                    if (q_filtered_wrt) then 
+                        call s_initialize_mpi_data(q_cons_vf, ib_markers, q_cons_filtered=q_cons_filtered)
+                    else 
+                        call s_initialize_mpi_data(q_cons_vf, ib_markers)
+                    end if
                 elseif (bubbles_lagrange) then
                     call s_initialize_mpi_data(q_cons_vf, beta=q_particle(1))
                 else
@@ -476,6 +482,18 @@ contains
                 ! Read the data for each variable
                 if (bubbles_euler .or. elasticity) then
                     do i = 1, sys_size
+                        var_MOK = int(i, MPI_OFFSET_KIND)
+
+                        ! Initial displacement to skip at beginning of file
+                        disp = m_MOK*max(MOK, n_MOK)*max(MOK, p_MOK)*WP_MOK*(var_MOK - 1)
+
+                        call MPI_FILE_SET_VIEW(ifile, disp, mpi_p, MPI_IO_DATA%view(i), &
+                                               'native', mpi_info_int, ierr)
+                        call MPI_FILE_READ_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size, &
+                                               mpi_p, status, ierr)
+                    end do
+                else if (q_filtered_wrt) then 
+                    do i = 1, 2*sys_size+1
                         var_MOK = int(i, MPI_OFFSET_KIND)
 
                         ! Initial displacement to skip at beginning of file
@@ -1302,6 +1320,199 @@ contains
 
     end subroutine s_populate_conservative_variables_buffer_regions
 
+    subroutine s_populate_filtered_variables_buffer_regions(q_particle)
+        type(scalar_field), intent(inout), optional :: q_particle
+
+        integer :: i, j, k !< Generic loop iterators
+
+        ! Populating Buffer Regions in the x-direction
+
+        ! Periodic BC at the beginning
+        if (bc_x%beg == -1) then
+
+            do j = 1, buff_size
+                if (present(q_particle)) then
+                    q_particle%sf(-j, 0:n, 0:p) = &
+                        q_particle%sf((m + 1) - j, 0:n, 0:p)
+                else
+                    do i = 1, sys_size+1
+                        q_cons_filtered(i)%sf(-j, 0:n, 0:p) = &
+                            q_cons_filtered(i)%sf((m + 1) - j, 0:n, 0:p)
+                    end do
+                end if
+            end do
+
+        ! Processor BC at the beginning
+        else
+            if (present(q_particle)) then
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                             'beg', 'x', q_particle)
+            else
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                             'beg', 'x')
+            end if
+
+        end if
+
+        ! Perodic BC at the end
+        if (bc_x%end == -1) then
+
+            do j = 1, buff_size
+                if (present(q_particle)) then
+                    q_particle%sf(m + j, 0:n, 0:p) = &
+                        q_particle%sf(j - 1, 0:n, 0:p)
+                else
+                    do i = 1, sys_size+1
+                        q_cons_filtered(i)%sf(m + j, 0:n, 0:p) = &
+                            q_cons_filtered(i)%sf(j - 1, 0:n, 0:p)
+                    end do
+                end if
+            end do
+
+        ! Processor BC at the end
+        else
+
+            if (present(q_particle)) then
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                             'end', 'x', q_particle)
+            else
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                             'end', 'x')
+            end if
+
+        end if
+
+        ! END: Populating Buffer Regions in the x-direction
+
+        ! Populating Buffer Regions in the y-direction
+
+        if (n > 0) then
+
+            ! Periodic BC at the beginning
+            if (bc_y%beg == -1) then
+
+                do j = 1, buff_size
+                    if (present(q_particle)) then
+                        q_particle%sf(:, -j, 0:p) = &
+                            q_particle%sf(:, (n + 1) - j, 0:p)
+                    else
+                        do i = 1, sys_size+1
+                            q_cons_filtered(i)%sf(:, -j, 0:p) = &
+                                q_cons_filtered(i)%sf(:, (n + 1) - j, 0:p)
+                        end do
+                    end if
+                end do
+
+            ! Processor BC at the beginning
+            else
+                if (present(q_particle)) then
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                 'beg', 'y', q_particle)
+                else
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                 'beg', 'y')
+                end if
+
+            end if
+
+            ! Perodic BC at the end
+            if (bc_y%end == -1) then
+
+                do j = 1, buff_size
+                    if (present(q_particle)) then
+                        q_particle%sf(:, n + j, 0:p) = &
+                            q_particle%sf(:, j - 1, 0:p)
+                    else
+                        do i = 1, sys_size+1
+                            q_cons_filtered(i)%sf(:, n + j, 0:p) = &
+                                q_cons_filtered(i)%sf(:, j - 1, 0:p)
+                        end do
+                    end if
+                end do
+
+                ! Processor BC at the end
+            else
+
+                if (present(q_particle)) then
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                 'end', 'y', q_particle)
+                else
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                 'end', 'y')
+                end if
+
+            end if
+
+            ! END: Populating Buffer Regions in the y-direction
+
+            ! Populating Buffer Regions in the z-direction
+
+            if (p > 0) then
+
+                ! Periodic BC at the beginning
+                if (bc_z%beg == -1) then
+
+                    do j = 1, buff_size
+                        if (present(q_particle)) then
+                            q_particle%sf(:, :, -j) = &
+                                q_particle%sf(:, :, (p + 1) - j)
+                        else
+                            do i = 1, sys_size+1
+                                q_cons_filtered(i)%sf(:, :, -j) = &
+                                    q_cons_filtered(i)%sf(:, :, (p + 1) - j)
+                            end do
+                        end if
+                    end do
+
+                    ! Processor BC at the beginning
+                else
+
+                    if (present(q_particle)) then
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                     'beg', 'z', q_particle)
+                    else
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                     'beg', 'z')
+                    end if
+
+                end if
+
+                    ! Perodic BC at the end
+                if (bc_z%end == -1) then
+
+                    do j = 1, buff_size
+                        if (present(q_particle)) then
+                            q_particle%sf(:, :, p + j) = &
+                                q_particle%sf(:, :, j - 1)
+                        else
+                            do i = 1, sys_size+1
+                                q_cons_filtered(i)%sf(:, :, p + j) = &
+                                    q_cons_filtered(i)%sf(:, :, j - 1)
+                            end do
+                        end if
+                    end do
+
+                    ! Processor BC at the end
+                else
+
+                    if (present(q_particle)) then
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                     'end', 'z', q_particle)
+                    else
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
+                                                                     'end', 'z')
+                    end if
+
+                end if
+
+            end if
+
+        end if
+
+        ! END: Populating Buffer Regions in the z-direction
+
+    end subroutine s_populate_filtered_variables_buffer_regions
+
     !>  Computation of parameters, allocation procedures, and/or
         !!      any other tasks needed to properly setup the module
     subroutine s_initialize_data_input_module
@@ -1314,6 +1525,8 @@ contains
         allocate (q_cons_vf(1:sys_size))
         allocate (q_prim_vf(1:sys_size))
         if (bubbles_lagrange) allocate (q_particle(1))
+
+        if (q_filtered_wrt) allocate (q_cons_filtered(1:sys_size+1))
 
         ! Allocating the parts of the conservative and primitive variables
         ! that do require the direct knowledge of the dimensionality of the
@@ -1351,6 +1564,14 @@ contains
                                         -buff_size:n + buff_size, &
                                         -buff_size:p + buff_size))
                 end if
+
+                if (q_filtered_wrt) then
+                    do i = 1, sys_size+1
+                        allocate (q_cons_filtered(i)%sf(-buff_size:m + buff_size, &
+                                                        -buff_size:n + buff_size, &
+                                                        -buff_size:p + buff_size))
+                    end do
+                end if 
 
                 ! Simulation is 2D
             else
@@ -1442,6 +1663,12 @@ contains
 
         if (chemistry) then
             deallocate (q_T_sf%sf)
+        end if
+
+        if (q_filtered_wrt) then 
+            do i = 1, sys_size+1 
+                deallocate (q_cons_filtered(i)%sf)
+            end do
         end if
 
         s_read_data_files => null()

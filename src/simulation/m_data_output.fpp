@@ -76,7 +76,7 @@ contains
         !! @param q_cons_vf Conservative variables
         !! @param q_prim_vf Primitive variables
         !! @param t_step Current time step
-    subroutine s_write_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta)
+    subroutine s_write_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta, q_cons_filtered)
 
         type(scalar_field), &
             dimension(sys_size), &
@@ -94,10 +94,12 @@ contains
         type(scalar_field), &
             intent(inout), optional :: beta
 
+        type(scalar_field), dimension(sys_size+1), intent(inout), optional :: q_cons_filtered
+
         if (.not. parallel_io) then
             call s_write_serial_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta)
         else
-            call s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta)
+            call s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered)
         end if
 
     end subroutine s_write_data_files
@@ -786,12 +788,13 @@ contains
         !!  @param q_prim_vf Cell-average primitive variables
         !!  @param t_step Current time-step
         !!  @param beta Eulerian void fraction from lagrangian bubbles
-    subroutine s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta)
+    subroutine s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered)
 
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         integer, intent(in) :: t_step
         type(scalar_field), intent(inout), optional :: beta
+        type(scalar_field), dimension(sys_size+1), intent(inout), optional :: q_cons_filtered
 
 #ifdef MFC_MPI
 
@@ -813,6 +816,8 @@ contains
 
         if (present(beta)) then
             alt_sys = sys_size + 1
+        else if (present(q_cons_filtered)) then
+            alt_sys = 2*sys_size+1
         else
             alt_sys = sys_size
         end if
@@ -895,8 +900,12 @@ contains
         else
             ! Initialize MPI data I/O
 
-            if (ib) then
-                call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm)
+            if (ib) then    
+                if (present(q_cons_filtered)) then 
+                    call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, q_cons_filtered=q_cons_filtered)
+                else 
+                    call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm)
+                end if
             elseif (present(beta)) then
                 call s_initialize_mpi_data(q_cons_vf, beta=beta)
             else
@@ -951,6 +960,19 @@ contains
                                                 mpi_p, status, ierr)
                     end do
                 end if
+
+            else if (fourier_transform_filtering) then
+                do i = 1, 2*sys_size+1
+                    var_MOK = int(i, MPI_OFFSET_KIND)
+
+                    ! Initial displacement to skip at beginning of file
+                    disp = m_MOK*max(MOK, n_MOK)*max(MOK, p_MOK)*WP_MOK*(var_MOK - 1)
+                    call MPI_FILE_SET_VIEW(ifile, disp, mpi_p, MPI_IO_DATA%view(i), &
+                                           'native', mpi_info_int, ierr)
+                    call MPI_FILE_WRITE_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size, &
+                                            mpi_p, status, ierr)
+                end do
+
             else
                 do i = 1, sys_size !TODO: check if correct (sys_size
                     var_MOK = int(i, MPI_OFFSET_KIND)

@@ -94,13 +94,14 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: q_vel_filtered
     type(vector_field), allocatable, dimension(:) :: pt_Re_stress
     type(vector_field), allocatable, dimension(:) :: R_mu
-
+    type(vector_field), allocatable, dimension(:) :: div_tau_filtered
+    type(vector_field), allocatable, dimension(:) :: int_tau_prime
 
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
     !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
-    !$acc declare create(q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu)
+    !$acc declare create(q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, div_tau_filtered, int_tau_prime)
 
 contains
 
@@ -419,6 +420,32 @@ contains
                         idwbuff(3)%beg:idwbuff(3)%end))
                 end do
                 @:ACC_SETUP_VFs(R_mu(i))
+            end do
+
+            @:ALLOCATE(div_tau_filtered(1:num_dims))
+            do i = 1, num_dims
+                @:ALLOCATE(div_tau_filtered(i)%vf(1:num_dims))
+            end do
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:ALLOCATE(div_tau_filtered(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                        idwbuff(2)%beg:idwbuff(2)%end, &
+                        idwbuff(3)%beg:idwbuff(3)%end))
+                end do
+                @:ACC_SETUP_VFs(div_tau_filtered(i))
+            end do
+
+            @:ALLOCATE(int_tau_prime(1:num_dims))
+            do i = 1, num_dims
+                @:ALLOCATE(int_tau_prime(i)%vf(1:num_dims))
+            end do
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:ALLOCATE(int_tau_prime(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                        idwbuff(2)%beg:idwbuff(2)%end, &
+                        idwbuff(3)%beg:idwbuff(3)%end))
+                end do
+                @:ACC_SETUP_VFs(int_tau_prime(i))
             end do
         end if
 
@@ -1584,6 +1611,23 @@ contains
 
     end subroutine s_compute_R_mu
 
+    subroutine s_compute_interphase_momentum_exchange_term(div_tau_filtered, int_tau_prime)
+        type(vector_field), dimension(1:num_dims) :: div_tau_filtered
+        type(vector_field), dimension(1:num_dims) :: int_tau_prime
+        real(wp) :: F_IMET, gaussian_filter
+
+        integer :: i, j, k, l, q, ii
+        
+        
+        do ii = 1, num_ibs
+            !F_IMET = F_IMET + gaussian_filter*(4._wp/3._wp*pi*patch_ib(ii)%radius**3*div_tau_filtered + int_tau_prime)
+
+        end do
+        
+
+
+    end subroutine s_compute_interphase_momentum_exchange_term
+
     !> Strang splitting scheme with 3rd order TVD RK time-stepping algorithm for
         !!      the flux term and adaptive time stepping algorithm for
         !!      the source term
@@ -2054,6 +2098,22 @@ contains
                 @:DEALLOCATE(R_mu(i)%vf)
             end do
             @:DEALLOCATE(R_mu)
+
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:DEALLOCATE(div_tau_filtered(i)%vf(j)%sf)
+                end do
+                @:DEALLOCATE(div_tau_filtered(i)%vf)
+            end do
+            @:DEALLOCATE(div_tau_filtered)
+
+            do i = 1, num_dims
+                do j = 1, num_dims
+                    @:DEALLOCATE(int_tau_prime(i)%vf(j)%sf)
+                end do
+                @:DEALLOCATE(int_tau_prime(i)%vf)
+            end do
+            @:DEALLOCATE(int_tau_prime)
         end if
         
         if (compute_CD_vi) then

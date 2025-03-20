@@ -25,7 +25,7 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 4.0E-06
-Nt = 500
+Nt = 10
 t_save = 1
 
 Nx = 63
@@ -114,6 +114,7 @@ case_dict = {
     "precision": 2,
     "prim_vars_wrt": "T",
     "E_wrt": "T",
+    "q_filtered_wrt": "T",
     "parallel_io": "T",
     # Patch: Constant Tube filled with air
     # Specify the cylindrical air tube grid geometry

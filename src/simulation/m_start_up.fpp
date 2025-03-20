@@ -1410,7 +1410,11 @@ contains
             call s_write_restart_lag_bubbles(save_count) !parallel 
             if (lag_params%write_bubbles_stats) call s_write_lag_bubble_stats()
         else
-            call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count)
+            if (fourier_transform_filtering) then
+                call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count, q_cons_filtered=q_cons_filtered)
+            else 
+                call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count)
+            end if
         end if
 
         call nvtxEndRange

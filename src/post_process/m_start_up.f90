@@ -84,7 +84,7 @@ contains
             relax_model, cf_wrt, sigma, adv_n, ib, num_ibs, &
             cfl_adap_dt, cfl_const_dt, t_save, t_stop, n_start, &
             cfl_target, surface_tension, bubbles_lagrange, rkck_adap_dt, &
-            sim_data, hyperelasticity
+            sim_data, hyperelasticity, q_filtered_wrt
 
         ! Inquiring the status of the post_process.inp file
         file_loc = 'post_process.inp'
@@ -178,6 +178,7 @@ contains
         ! Populating the buffer regions of the conservative variables
         if (buff_size > 0) then
             call s_populate_conservative_variables_buffer_regions()
+            if (q_filtered_wrt) call s_populate_filtered_variables_buffer_regions()
             if (bubbles_lagrange) call s_populate_conservative_variables_buffer_regions(q_particle(1))
         end if
 
@@ -306,6 +307,17 @@ contains
 
             end if
         end do
+
+        ! Adding filtered quantities
+        if (q_filtered_wrt) then
+            do i = 1, sys_size+1
+                q_sf = q_cons_filtered(i)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+                write (varname, '(A,I0)') 'q_cons_filtered', i
+                call s_write_variable_to_formatted_database_file(varname, t_step)
+
+                varname(:) = ' '
+            end do
+        end if
 
         ! Adding the species' concentrations to the formatted database file
         if (chemistry) then

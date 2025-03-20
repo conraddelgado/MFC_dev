@@ -233,6 +233,7 @@ module m_global_parameters
     logical :: ib
     logical :: chem_wrt_Y(1:num_species)
     logical :: chem_wrt_T
+    logical :: q_filtered_wrt
     !> @}
 
     real(wp), dimension(num_fluids_max) :: schlieren_alpha    !<
@@ -398,6 +399,7 @@ contains
         sim_data = .false.
         cf_wrt = .false.
         ib = .false.
+        q_filtered_wrt = .false.
 
         schlieren_alpha = dflt_real
 
@@ -727,6 +729,13 @@ contains
                 allocate (MPI_IO_DATA%var(i)%sf(0:m, 0:n, 0:p))
                 MPI_IO_DATA%var(i)%sf => null()
             end do
+        else if (q_filtered_wrt) then
+            allocate (MPI_IO_DATA%view(1:2*sys_size+1))
+            allocate (MPI_IO_DATA%var(1:2*sys_size+1))
+            do i = 1, 2*sys_size+1
+                allocate (MPI_IO_DATA%var(i)%sf(0:m, 0:n, 0:p))
+                MPI_IO_DATA%var(i)%sf => null()
+            end do
         else
             allocate (MPI_IO_DATA%view(1:sys_size))
             allocate (MPI_IO_DATA%var(1:sys_size))
@@ -906,6 +915,12 @@ contains
             end do
 
             if (bubbles_lagrange) MPI_IO_DATA%var(sys_size + 1)%sf => null()
+
+            if (q_filtered_wrt) then 
+                do i = sys_size+1, 2*sys_size+1
+                    MPI_IO_DATA%var(i)%sf => null()
+                end do
+            end if
 
             deallocate (MPI_IO_DATA%var)
             deallocate (MPI_IO_DATA%view)

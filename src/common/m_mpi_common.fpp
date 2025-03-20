@@ -63,7 +63,7 @@ contains
     !! @param levelset closest distance from every cell to the IB
     !! @param levelset_norm normalized vector from every cell to the closest point to the IB
     !! @param beta Eulerian void fraction from lagrangian bubbles
-    subroutine s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, beta)
+    subroutine s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, beta, q_cons_filtered)
 
         type(scalar_field), &
             dimension(sys_size), &
@@ -84,6 +84,8 @@ contains
         type(scalar_field), &
             intent(in), optional :: beta
 
+        type(scalar_field), dimension(sys_size+1), intent(in), optional :: q_cons_filtered
+
         integer, dimension(num_dims) :: sizes_glb, sizes_loc
         integer, dimension(1) :: airfoil_glb, airfoil_loc, airfoil_start
 
@@ -97,6 +99,8 @@ contains
 
         if (present(beta)) then
             alt_sys = sys_size + 1
+        else if (present(q_cons_filtered)) then
+            alt_sys = 2*sys_size+1
         else
             alt_sys = sys_size
         end if
@@ -104,6 +108,11 @@ contains
         do i = 1, sys_size
             MPI_IO_DATA%var(i)%sf => q_cons_vf(i)%sf(0:m, 0:n, 0:p)
         end do
+        if (present(q_cons_filtered)) then 
+            do i = sys_size+1, 2*sys_size+1
+                MPI_IO_DATA%var(i)%sf => q_cons_filtered(i-sys_size)%sf(0:m, 0:n, 0:p)
+            end do
+        end if 
 
         if (present(beta)) then
             MPI_IO_DATA%var(alt_sys)%sf => beta%sf(0:m, 0:n, 0:p)
