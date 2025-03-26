@@ -52,8 +52,8 @@ if (__name__ == '__main__'):
     print('running 3D...')
 
     # setup 
-    phi = 0.2
-    str_phi = '02'
+    phi = 0.05
+    str_phi = '005'
 
     D = 0.1
     L = 10*D

@@ -150,7 +150,21 @@ contains
 
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
     subroutine s_initialize_fftw_explicit_filter_module
+        integer :: ierr
+        integer(c_size_t) :: local_n0
+        integer(c_size_t) :: start_idx_temp
+        integer(c_size_t) :: alloc_local
+        
+
+        include 'fftw3-mpi.f03'
         print *, 'FFTW SETUP...'
+        print *, 'MPI', num_procs, proc_rank
+        print *, 'mnp', m, n, p
+        print *, 'idx', start_idx(1), start_idx(2), start_idx(3)
+
+        call fftw_mpi_init()
+        start_idx_temp = start_idx(1)
+        !call fftw_mpi_local_size_3d(int((m_glb+1)/2+1, c_size_t), int(n_glb+1, c_size_t), int(p_glb+1, c_size_t), MPI_COMM_WORLD, alloc_local, int(start_idx_temp, c_size_t))
 
         ! data setup 
         p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
@@ -159,8 +173,8 @@ contains
         call c_f_pointer(p_real, array_in, [m+1, n+1, p+1])
         call c_f_pointer(p_complex, array_out, [(m+1)/2+1, n+1, p+1])
 
-        plan_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_in, array_out, FFTW_ESTIMATE)
-        plan_backward = fftw_plan_dft_c2r_3d(p+1, n+1, m+1, array_out, array_in, FFTW_ESTIMATE)
+        plan_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_in, array_out, FFTW_MEASURE)
+        plan_backward = fftw_plan_dft_c2r_3d(p+1, n+1, m+1, array_out, array_in, FFTW_MEASURE)
 
         ! kernel setup
         p_kernelG_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
@@ -169,46 +183,46 @@ contains
         call c_f_pointer(p_kernelG_real, array_kernelG_in, [m+1, n+1, p+1])
         call c_f_pointer(p_kernelG_complex, array_kernelG_out, [(m+1)/2+1, n+1, p+1])
 
-        plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_ESTIMATE)
+        plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_MEASURE)
 
     end subroutine s_initialize_fftw_explicit_filter_module
 
     subroutine s_initialize_gaussian_filter
-        real(dp) :: r_norm
         real(dp) :: sigma
-        real(dp) :: kx, ky, kz, k_squared
-        real(dp) :: Lx, Ly, Lz  
+        real(dp) :: Lx, Ly, Lz
+        real(dp) :: x_r, y_r, z_r  
+        real(dp) :: r
+        real(dp) :: G_norm_int
         integer :: i, j, k
 
-        sigma = 3_dp * patch_ib(1)%radius
+        sigma = 3._dp * patch_ib(1)%radius
 
-        Lx = x_domain%end - x_domain%beg
-        Ly = y_domain%end - y_domain%beg   
-        Lz = z_domain%end - z_domain%beg    
+        Lx = x_domain_end_glb - x_domain_beg_glb
+        Ly = y_domain_end_glb - y_domain_beg_glb  
+        Lz = z_domain_end_glb - z_domain_beg_glb    
 
-        do i = 0, (m+1)/2 
-            do j = 0, n
-                do k = 0, p
-                    kx = 2.0_dp * pi * i / Lx
+        G_norm_int = 0._dp
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p 
+                    x_r = min(abs(x_cc(i) - x_domain_beg_glb), Lx - abs(x_cc(i) - x_domain_beg_glb))
+                    y_r = min(abs(y_cc(j) - y_domain_beg_glb), Ly - abs(y_cc(j) - y_domain_beg_glb))
+                    z_r = min(abs(z_cc(k) - z_domain_beg_glb), Lz - abs(z_cc(k) - z_domain_beg_glb))
 
-                    if (j <= (n+1)/2) then
-                        ky = 2.0_dp * pi * j / Ly
-                    else
-                        ky = 2.0_dp * pi * (j - (n+1)) / Ly
-                    end if
+                    r = x_r**2 + y_r**2 + z_r**2
 
-                    if (k <= (p+1)/2) then
-                        kz = 2.0_dp * pi * k / Lz
-                    else
-                        kz = 2.0_dp * pi * (k - (p+1)) / Lz
-                    end if
+                    array_kernelG_in(i+1, j+1, k+1) = exp(-r/(2._dp*sigma**2))
 
-                    k_squared = kx**2 + ky**2 + kz**2
-
-                    array_kernelG_out(i+1, j+1, k+1) = exp(-0.5_dp * sigma**2 * k_squared)
-                end do
+                    G_norm_int = G_norm_int + array_kernelG_in(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
+                end do 
             end do
         end do
+
+        array_kernelG_in = array_kernelG_in / G_norm_int ! normalize gaussian, integrate to unity over domain
+
+        call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
+        
+        array_kernelG_out = array_kernelG_out / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp)) ! normalize DFT
 
     end subroutine s_initialize_gaussian_filter
 
@@ -221,38 +235,14 @@ contains
 
         integer :: i, j, k, l, q
 
-        ! conservative variables volume filtering
-        do l = 1, sys_size
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
-                        if (ib_markers%sf(i, j, k) == 0) then
-                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)
-                        else
-                            array_in(i+1, j+1, k+1) = 0_dp
-                        end if
-                    end do 
-                end do
-            end do
-
-            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-            q_cons_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
-                        
-        end do 
-
         ! volume filter fluid volume fraction
         do i = 0, m
             do j = 0, n 
                 do k = 0, p
                     if (ib_markers%sf(i, j, k) == 0) then ! in fluid
-                        array_in(i+1, j+1, k+1) = 1_dp
+                        array_in(i+1, j+1, k+1) = 1._dp 
                     else
-                        array_in(i+1, j+1, k+1) = 0_dp
+                        array_in(i+1, j+1, k+1) = 0._dp
                     end if
                 end do 
             end do
@@ -264,17 +254,17 @@ contains
 
         call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-        q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
+        q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
 
-        ! velocity volume filtering
-        do l = momxb, momxe
+        ! conservative variables volume filtering
+        do l = 1, sys_size
             do i = 0, m
                 do j = 0, n 
                     do k = 0, p
                         if (ib_markers%sf(i, j, k) == 0) then
-                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k)
+                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)
                         else
-                            array_in(i+1, j+1, k+1) = 0_dp
+                            array_in(i+1, j+1, k+1) = 0._dp
                         end if
                     end do 
                 end do
@@ -286,15 +276,42 @@ contains
 
             call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-            q_vel_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi)) ! unnormalized DFT
+            q_cons_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
+                        
+        end do 
+
+        ! velocity volume filtering
+        do l = momxb, momxe
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p
+                        if (ib_markers%sf(i, j, k) == 0) then
+                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k)
+                        else
+                            array_in(i+1, j+1, k+1) = 0._dp
+                        end if
+                    end do 
+                end do
+            end do
+
+            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+
+            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+            q_vel_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
                         
         end do 
 
     end subroutine s_apply_fftw_filter_cons
 
-    subroutine s_apply_fftw_filter_tensor(pt_Re_stress, R_mu)
+    subroutine s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered)
         type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
+        type(scalar_field), dimension(sys_size+1), intent(in) :: q_cons_filtered
+        type(scalar_field), dimension(momxb:momxe), intent(in) :: rhs_rhouu
+        type(scalar_field), dimension(1:num_dims), intent(inout) :: pImT_filtered
 
         real(dp) :: volfrac_phi
 
@@ -309,7 +326,7 @@ contains
                             if (ib_markers%sf(i, j, k) == 0) then
                                 array_in(i+1, j+1, k+1) = pt_Re_stress(l)%vf(q)%sf(i, j, k)
                             else
-                                array_in(i+1, j+1, k+1) = 0_dp
+                                array_in(i+1, j+1, k+1) = 0._dp
                             end if
                         end do 
                     end do
@@ -321,12 +338,12 @@ contains
 
                 call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp)) 
+                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) 
 
             end do
         end do 
 
-        ! volume filter -> used in pseudo turbulent Reynolds stress
+        ! volume filter -> used in effective viscosity
         do l = 1, num_dims
             do q = 1, num_dims
                 do i = 0, m
@@ -335,7 +352,7 @@ contains
                             if (ib_markers%sf(i, j, k) == 0) then
                                 array_in(i+1, j+1, k+1) = R_mu(l)%vf(q)%sf(i, j, k)
                             else
-                                array_in(i+1, j+1, k+1) = 0_dp
+                                array_in(i+1, j+1, k+1) = 0._dp
                             end if
                         end do 
                     end do
@@ -347,10 +364,32 @@ contains
 
                 call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-                R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) = -R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) + array_in(1:m+1, 1:n+1, 1:p+1) / ((real(m, dp)+1_dp)*(real(n, dp)+1_dp)*(real(p, dp)+1_dp) * (1._wp - volfrac_phi))
+                R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p))
 
             end do
         end do 
+
+        do l = 1, num_dims  
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        if (ib_markers%sf(i, j, k) == 0) then
+                            array_in(i+1, j+1, k+1) = 0._dp 
+                        else 
+                            array_in(i+1, j+1, k+1) = rhs_rhouu(momxb-1+l)%sf(i, j, k)
+                        end if
+                    end do 
+                end do 
+            end do
+            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+
+            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+            pImT_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) 
+
+        end do
 
     end subroutine s_apply_fftw_filter_tensor
 

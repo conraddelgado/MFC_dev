@@ -1004,7 +1004,7 @@ contains
             end do
 
             ! drag calculation loop, x-dir
-            if (compute_CD_vi) then
+            if (compute_CD_vi .or. fourier_transform_filtering) then
                 !$acc parallel loop collapse(4) gang vector default(present)
                 do l = momxb, momxe
                     do i = 0, m
@@ -1132,7 +1132,7 @@ contains
             end do
 
             ! drag calculation loop, y-dir
-            if (compute_CD_vi) then
+            if (compute_CD_vi .or. fourier_transform_filtering) then
                 !$acc parallel loop collapse(4) gang vector default(present)
                 do l = momxb, momxe
                     do i = 0, m
@@ -1356,7 +1356,7 @@ contains
             end if
 
             ! drag calculation loop, z-dir
-            if (compute_CD_vi) then
+            if (compute_CD_vi .or. fourier_transform_filtering) then
                 !$acc parallel loop collapse(4) gang vector default(present)
                 do l = momxb, momxe
                     do i = 0, m

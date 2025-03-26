@@ -1460,9 +1460,6 @@ contains
         if (grid_geometry == 3) call s_initialize_fftw_module()
         call s_initialize_riemann_solvers_module()
 
-        if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter_module()
-        if (fourier_transform_filtering) call s_initialize_gaussian_filter()
-
         if(bubbles_euler) call s_initialize_bubbles_EE_module()
         if (ib) call s_initialize_ibm_module()
         if (qbmm) call s_initialize_qbmm_module()
@@ -1527,6 +1524,9 @@ contains
 
         if (hypoelasticity) call s_initialize_hypoelastic_module()
         if (hyperelasticity) call s_initialize_hyperelastic_module()
+        
+        if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter_module()
+        if (fourier_transform_filtering) call s_initialize_gaussian_filter()
 
     end subroutine s_initialize_modules
 
