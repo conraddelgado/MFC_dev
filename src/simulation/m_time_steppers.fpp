@@ -97,11 +97,16 @@ module m_time_steppers
     type(scalar_field), allocatable, dimension(:) :: pImT_filtered
     type(scalar_field), allocatable, dimension(:) :: F_IMET
 
+    type(scalar_field) :: mag_div_Ru
+    type(scalar_field) :: mag_div_R_mu
+    type(scalar_field) :: mag_F_IMET
+
     !$acc declare create(q_cons_ts, q_prim_vf, q_T_sf, rhs_vf, rhs_ts_rkck, q_prim_ts, rhs_mv, rhs_pb, max_dt)
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
     !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
     !$acc declare create(q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, pImT_filtered, F_IMET)
+    !$acc declare create(mag_div_Ru, mag_div_R_mu, mag_F_IMET)
 
 contains
 
@@ -330,22 +335,24 @@ contains
             @:ALLOCATE(F_D_vi(num_ibs))
         end if
 
-        if (compute_CD_si) then
-            @:ALLOCATE(du_dxyz(1:3))
+        if (compute_CD_si .or. fourier_transform_filtering) then
+            @:ALLOCATE(du_dxyz(momxb:momxe))
 
-            do i = 1, 3
-                @:ALLOCATE(du_dxyz(i)%vf(1:3))
+            do i = momxb, momxe
+                @:ALLOCATE(du_dxyz(i)%vf(1:num_dims))
             end do
 
-            do i = 1, 3
-                do j = 1, 3
+            do i = momxb, momxe
+                do j = 1, num_dims
                     @:ALLOCATE(du_dxyz(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
                         idwbuff(2)%beg:idwbuff(2)%end, &
                         idwbuff(3)%beg:idwbuff(3)%end))
                 end do
                 @:ACC_SETUP_VFs(du_dxyz(i))
             end do
+        end if 
 
+        if (compute_CD_si) then
             @:ALLOCATE(F_D_si(num_ibs))
 
             @:ALLOCATE(dudx_surf(1:3))
@@ -382,8 +389,8 @@ contains
         end if
 
         if (fourier_transform_filtering) then 
-            @:ALLOCATE(q_cons_filtered(1:sys_size+1))
-            do i = 1, sys_size+1
+            @:ALLOCATE(q_cons_filtered(1:sys_size))
+            do i = 1, sys_size
                 @:ALLOCATE(q_cons_filtered(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
                     idwbuff(2)%beg:idwbuff(2)%end, &
                     idwbuff(3)%beg:idwbuff(3)%end))
@@ -439,6 +446,22 @@ contains
                     idwbuff(3)%beg:idwbuff(3)%end))
                 @:ACC_SETUP_SFs(F_IMET(i))
             end do
+
+            ! magnitude of momentum unclosed terms
+            @:ALLOCATE(mag_div_Ru%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(mag_div_Ru)
+
+            @:ALLOCATE(mag_div_R_mu%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(mag_div_R_mu)
+
+            @:ALLOCATE(mag_F_IMET%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(mag_F_IMET)
         end if
 
         ! Opening and writing the header of the run-time information file
@@ -783,7 +806,7 @@ contains
         end if
 
         if (periodic_forcing) then 
-            call s_compute_phase_average(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
+            call s_compute_phase_average(q_cons_ts(1)%vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step+1)
             call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_bar, q_periodic_force)
         end if
 
@@ -791,17 +814,17 @@ contains
         if (fourier_transform_filtering) then
             call s_apply_fftw_filter_cons(q_cons_ts(1)%vf, q_cons_filtered, q_vel_filtered, volfrac_phi) ! filter conservative variables
 
-            write(103) q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) !q_cons_filtered(sys_size+1)%sf(:, :, :)
+            write(103) q_cons_filtered(sys_size)%sf(0:m, 0:n, 0:p) !q_cons_filtered(sys_size+1)%sf(:, :, :)
 
-            call s_setup_terms_filtering(q_cons_ts(1)%vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu) ! setup terms for filtering
+            call s_setup_terms_filtering(q_cons_ts(1)%vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, mag_div_R_mu) ! setup terms for filtering
                     
             call s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered) ! filter terms for tensors
 
-            call s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress) ! calculate pseudo turbulent reynolds stress
+            call s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress, mag_div_Ru) ! calculate pseudo turbulent reynolds stress
 
-            call s_compute_R_mu(R_mu) ! calculate R_mu
+            call s_compute_R_mu(R_mu, mag_div_R_mu) ! calculate R_mu
 
-            call s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered) ! calculate interphase momentum exchange term
+            call s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered, mag_F_IMET) ! calculate interphase momentum exchange term
         end if
 
         call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
@@ -1305,14 +1328,12 @@ contains
     end subroutine s_compute_dragforce_si 
 
     ! computes the phase average (time and space) of rho*u, rho, and T
-    subroutine s_compute_phase_average(q_cons_vf, q_T_sf, q_prim_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
+    subroutine s_compute_phase_average(q_cons_vf, q_bar, q_spatial_avg, q_spatial_avg_glb, t_step)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), intent(inout) :: q_T_sf
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         type(scalar_field), dimension(1:5), intent(inout) :: q_bar ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg ! 1:3 rho*u, 4 rho, 5 T
         real(wp), dimension(1:5), intent(inout) :: q_spatial_avg_glb
-        integer :: i, j, k, t_step, pos
+        integer :: i, j, k, t_step
 
         ! initialize
         !$acc parallel loop gang vector default(present)
@@ -1434,12 +1455,14 @@ contains
 
     end subroutine s_add_periodic_forcing
 
-    subroutine s_setup_terms_filtering(q_cons_vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu)
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_cons_filtered
-        type(scalar_field), dimension(momxb:momxe), intent(inout) :: q_vel_filtered
-        type(vector_field), dimension(1:num_dims) :: pt_Re_stress
-        type(vector_field), dimension(1:num_dims) :: R_mu
+    subroutine s_setup_terms_filtering(q_cons_vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, mag_div_R_mu)
+        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
+        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
+        type(scalar_field), dimension(momxb:momxe), intent(in) :: q_vel_filtered
+        type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
+        type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
+        type(scalar_field), intent(inout) :: mag_div_R_mu
+        real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_R_mu
 
         integer :: i, j, k, l, q
 
@@ -1456,51 +1479,62 @@ contains
                 end do 
             end do
 
+            ! set density and momentum buffers
+            do i = 1, momxe
+                q_cons_vf(i)%sf(-buff_size:-1, :, :) = q_cons_vf(i)%sf(m-buff_size+1:m, :, :)
+                q_cons_vf(i)%sf(m+1:m+buff_size, :, :) = q_cons_vf(i)%sf(0:buff_size-1, :, :)
+
+                q_cons_vf(i)%sf(:, -buff_size:-1, :) = q_cons_vf(i)%sf(:, n-buff_size+1:n, :)
+                q_cons_vf(i)%sf(:, n+1:n+buff_size, :) = q_cons_vf(i)%sf(:, 0:buff_size-1, :)
+
+                q_cons_vf(i)%sf(:, :, -buff_size:-1) = q_cons_vf(i)%sf(:, :, p-buff_size+1:p)
+                q_cons_vf(i)%sf(:, :, p+1:p+buff_size) = q_cons_vf(i)%sf(:, :, 0:buff_size-1)
+            end do
+            
             ! R_mu setup
             do i = 0, m
                 do j = 0, n
                     do k = 0, p
-                        R_mu(1)%vf(1)%sf(i, j, k) = mu_visc * (2*(q_cons_vf(momxb)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k))/(2*dx(i))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(1)%vf(1)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(2)%vf(2)%sf(i, j, k) = mu_visc * (2*(q_cons_vf(momxb+1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k))/(2*dy(j))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(2)%vf(2)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(3)%vf(3)%sf(i, j, k) = mu_visc * (2*(q_cons_vf(momxb+2)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1))/(2*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(3)%vf(3)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k)) & 
+                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(1)%vf(2)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j+1, k) - q_cons_vf(momxb)%sf(i, j-1, k))/(2*dy(j))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i+1, j, k) - q_cons_vf(momxb+1)%sf(i-1, j, k))/(2*dx(i))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(1)%vf(2)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k) & 
+                                                  + (q_cons_vf(momxb+1)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+1)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
                                                 
                         R_mu(2)%vf(1)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k)
 
-                        R_mu(1)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j, k+1) - q_cons_vf(momxb)%sf(i, j, k-1))/(2*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i+1, j, k) - q_cons_vf(momxb+2)%sf(i-1, j, k))/(2*dx(i))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(1)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
+                                                  + (q_cons_vf(momxb+2)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+2)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
 
                         R_mu(3)%vf(1)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k)
 
-                        R_mu(2)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb+1)%sf(i, j, k+1) - q_cons_vf(momxb+1)%sf(i, j, k-1))/(2*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j+1, k) - q_cons_vf(momxb+2)%sf(i, j-1, k))/(2*dy(j))/q_cons_vf(1)%sf(i, j, k))
+                        R_mu(2)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb+1)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+1)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
+                                                  + (q_cons_vf(momxb+2)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+2)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k))
 
                         R_mu(3)%vf(2)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k)
                     end do
                 end do
             end do
-  
 
     end subroutine s_setup_terms_filtering
 
-    subroutine s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress)
-        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_cons_filtered
-        type(vector_field), dimension(1:num_dims) :: pt_Re_stress
+    subroutine s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress, mag_div_Ru)
+        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
+        type(vector_field), dimension(1:num_dims), intent(in) :: pt_Re_stress
+        type(scalar_field), intent(inout) :: mag_div_Ru
         real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_Ru
-        real(wp), dimension(0:m, 0:n, 0:p) :: mag_div_Ru
         integer :: i, j, k, l, q    
 
         do l = 1, num_dims
@@ -1521,7 +1555,7 @@ contains
                 do i = 1, num_dims
                     do j = 1, num_dims
                         do k = 1, num_dims  
-                            pt_Re_stress(l)%vf(1)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) * q_cons_filtered(sys_size+1)%sf(i, j, j)
+                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, j)
                         end do 
                     end do 
                 end do
@@ -1547,9 +1581,9 @@ contains
             do i = 0, m
                 do j = 0, n 
                     do k = 0, p
-                        div_Ru(l, i, j, k) = (pt_Re_stress(l)%vf(1)%sf(i+1, j, k) - pt_Re_stress(l)%vf(1)%sf(i-1, j, k))/(2*dx(i)) &
-                                           + (pt_Re_stress(l)%vf(2)%sf(i, j+1, k) - pt_Re_stress(l)%vf(2)%sf(i, j-1, k))/(2*dy(j)) & 
-                                           + (pt_Re_stress(l)%vf(3)%sf(i, j, k+1) - pt_Re_stress(l)%vf(3)%sf(i, j, k-1))/(2*dz(k))
+                        div_Ru(l, i, j, k) = (pt_Re_stress(l)%vf(1)%sf(i+1, j, k) - pt_Re_stress(l)%vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) &
+                                           + (pt_Re_stress(l)%vf(2)%sf(i, j+1, k) - pt_Re_stress(l)%vf(2)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                           + (pt_Re_stress(l)%vf(3)%sf(i, j, k+1) - pt_Re_stress(l)%vf(3)%sf(i, j, k-1))/(2._wp*dz(k))
                     end do
                 end do
             end do
@@ -1558,26 +1592,26 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-                    mag_div_Ru(i, j, k) = sqrt(sum(div_Ru(:, i, j, k)**2))
+                    mag_div_Ru%sf(i, j, k) = sqrt(sum(div_Ru(:, i, j, k)**2))
                 end do
             end do
         end do
 
         open(unit=104, file='Ru.bin', status='replace', form='unformatted', access='stream')
-        write(104) mag_div_Ru
+        write(104) mag_div_Ru%sf(0:m, 0:n, 0:p)
         close(104)
 
     end subroutine s_compute_pseudo_turbulent_reynolds_stress
 
-    subroutine s_compute_R_mu(R_mu)
-        type(vector_field), dimension(1:num_dims) :: R_mu
+    subroutine s_compute_R_mu(R_mu, mag_div_R_mu)
+        type(vector_field), dimension(1:num_dims), intent(in) :: R_mu
+        type(scalar_field), intent(inout) :: mag_div_R_mu
         real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_R_mu
-        real(wp), dimension(0:m, 0:n, 0:p) :: mag_div_R_mu
 
         integer :: i, j, k, l, q
 
-        ! set buffers for filtered momentum quantities
-        do i = momxb, momxe
+        ! set buffers for filtered momentum quantities and density
+        do i = 1, momxe
             q_cons_filtered(i)%sf(-buff_size:-1, :, :) = q_cons_filtered(i)%sf(m-buff_size+1:m, :, :)
             q_cons_filtered(i)%sf(m+1:m+buff_size, :, :) = q_cons_filtered(i)%sf(0:buff_size-1, :, :)
 
@@ -1592,35 +1626,36 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    R_mu(1)%vf(1)%sf(i, j, k) = R_mu(1)%vf(1)%sf(i, j, k) - mu_visc * (2*(q_cons_filtered(momxb)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k))/(2*dx(i))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                              + (q_cons_filtered(momxb+1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                              + (q_cons_filtered(momxb+2)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_filtered(1)%sf(i, j, k))
+                    R_mu(1)%vf(1)%sf(i, j, k) = R_mu(1)%vf(1)%sf(i, j, k) - mu_visc * (2._wp*(q_cons_filtered(momxb)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                            - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                            + (q_cons_filtered(momxb+1)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                            + (q_cons_filtered(momxb+2)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                    R_mu(2)%vf(2)%sf(i, j, k) = R_mu(2)%vf(2)%sf(i, j, k) - mu_visc * (2*(q_cons_filtered(momxb+1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k))/(2*dy(j))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                              + (q_cons_filtered(momxb+1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                              + (q_cons_filtered(momxb+2)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_filtered(1)%sf(i, j, k))
+                    R_mu(2)%vf(2)%sf(i, j, k) = R_mu(2)%vf(2)%sf(i, j, k) - mu_visc * (2._wp*(q_cons_filtered(momxb+1)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                            - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                            + (q_cons_filtered(momxb+1)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                            + (q_cons_filtered(momxb+2)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                    R_mu(3)%vf(3)%sf(i, j, k) = R_mu(3)%vf(3)%sf(i, j, k) - mu_visc * (2*(q_cons_filtered(momxb+2)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1))/(2*dz(k))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k))/(2*dx(i)) & 
-                                              + (q_cons_filtered(momxb+1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k))/(2*dy(j)) & 
-                                              + (q_cons_filtered(momxb+2)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1))/(2*dz(k)))/q_cons_filtered(1)%sf(i, j, k))
+                    R_mu(3)%vf(3)%sf(i, j, k) = R_mu(3)%vf(3)%sf(i, j, k) - mu_visc * (2._wp*(q_cons_filtered(momxb+2)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k)) & 
+                                            - 2._wp/3._wp*((q_cons_filtered(momxb)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                            + (q_cons_filtered(momxb+1)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb+1)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                            + (q_cons_filtered(momxb+2)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb+2)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                    R_mu(1)%vf(2)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb)%sf(i, j+1, k) - q_cons_filtered(momxb)%sf(i, j-1, k))/(2*dy(j))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              + (q_cons_filtered(momxb+1)%sf(i+1, j, k) - q_cons_filtered(momxb+1)%sf(i-1, j, k))/(2*dx(i))/q_cons_filtered(1)%sf(i, j, k))
-                                            
+                    R_mu(1)%vf(2)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_filtered(1)%sf(i, j, k) & 
+                                            + (q_cons_filtered(momxb+1)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb+1)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_filtered(1)%sf(i, j, k))
+                                        
                     R_mu(2)%vf(1)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k)
 
-                    R_mu(1)%vf(3)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb)%sf(i, j, k+1) - q_cons_filtered(momxb)%sf(i, j, k-1))/(2*dz(k))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              + (q_cons_filtered(momxb+2)%sf(i+1, j, k) - q_cons_filtered(momxb+2)%sf(i-1, j, k))/(2*dx(i))/q_cons_filtered(1)%sf(i, j, k))
+                    R_mu(1)%vf(3)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_filtered(1)%sf(i, j, k) & 
+                                            + (q_cons_filtered(momxb+2)%sf(i+1, j, k)/q_cons_filtered(1)%sf(i+1, j, k) - q_cons_filtered(momxb+2)%sf(i-1, j, k)/q_cons_filtered(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_filtered(1)%sf(i, j, k))
 
                     R_mu(3)%vf(1)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k)
 
-                    R_mu(2)%vf(3)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb+1)%sf(i, j, k+1) - q_cons_filtered(momxb+1)%sf(i, j, k-1))/(2*dz(k))/q_cons_filtered(1)%sf(i, j, k) & 
-                                              + (q_cons_filtered(momxb+2)%sf(i, j+1, k) - q_cons_filtered(momxb+2)%sf(i, j-1, k))/(2*dy(j))/q_cons_filtered(1)%sf(i, j, k))
+                    R_mu(2)%vf(3)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k) - mu_visc * ((q_cons_filtered(momxb+1)%sf(i, j, k+1)/q_cons_filtered(1)%sf(i, j, k+1) - q_cons_filtered(momxb+1)%sf(i, j, k-1)/q_cons_filtered(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_filtered(1)%sf(i, j, k) & 
+                                            + (q_cons_filtered(momxb+2)%sf(i, j+1, k)/q_cons_filtered(1)%sf(i, j+1, k) - q_cons_filtered(momxb+2)%sf(i, j-1, k)/q_cons_filtered(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_filtered(1)%sf(i, j, k))
 
                     R_mu(3)%vf(2)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k)
+                    
                 end do
             end do
         end do
@@ -1630,7 +1665,7 @@ contains
                 do i = 1, num_dims
                     do j = 1, num_dims
                         do k = 1, num_dims  
-                            R_mu(l)%vf(1)%sf(i, j, k) = R_mu(l)%vf(q)%sf(i, j, k) * q_cons_filtered(sys_size+1)%sf(i, j, j)
+                            R_mu(l)%vf(q)%sf(i, j, k) = R_mu(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, j)
                         end do 
                     end do 
                 end do
@@ -1656,9 +1691,9 @@ contains
             do i = 0, m
                 do j = 0, n 
                     do k = 0, p
-                        div_R_mu(l, i, j, k) = (R_mu(l)%vf(1)%sf(i+1, j, k) - R_mu(l)%vf(1)%sf(i-1, j, k))/(2*dx(i)) &
-                                           + (R_mu(l)%vf(2)%sf(i, j+1, k) - R_mu(l)%vf(2)%sf(i, j-1, k))/(2*dy(j)) & 
-                                           + (R_mu(l)%vf(3)%sf(i, j, k+1) - R_mu(l)%vf(3)%sf(i, j, k-1))/(2*dz(k))
+                        div_R_mu(l, i, j, k) = (R_mu(l)%vf(1)%sf(i+1, j, k) - R_mu(l)%vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) &
+                                           + (R_mu(l)%vf(2)%sf(i, j+1, k) - R_mu(l)%vf(2)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                           + (R_mu(l)%vf(3)%sf(i, j, k+1) - R_mu(l)%vf(3)%sf(i, j, k-1))/(2._wp*dz(k))
                     end do
                 end do
             end do
@@ -1667,28 +1702,28 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-                    mag_div_R_mu(i, j, k) = sqrt(sum(div_R_mu(:, i, j, k)**2))
+                    mag_div_R_mu%sf(i, j, k) = sqrt(sum(div_R_mu(:, i, j, k)**2))
                 end do
             end do
         end do
 
         open(unit=105, file='R_mu.bin', status='replace', form='unformatted', access='stream')
-        write(105) mag_div_R_mu
+        write(105) mag_div_R_mu%sf(0:m, 0:n, 0:p)
         close(105)  
 
     end subroutine s_compute_R_mu
 
-    subroutine s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered)
-        type(scalar_field), dimension(1:num_dims) :: F_IMET
-        type(scalar_field), dimension(1:num_dims) :: pImT_filtered
-        real(wp), dimension(0:m, 0:n, 0:p) :: mag_F_IMET
+    subroutine s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered, mag_F_IMET)
+        type(scalar_field), dimension(1:num_dims), intent(in) :: F_IMET
+        type(scalar_field), dimension(1:num_dims), intent(in) :: pImT_filtered
+        type(scalar_field), intent(inout) :: mag_F_IMET
 
         integer :: i, j, k, l, q, ii
 
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-                    mag_F_IMET(i, j, k) = sqrt(pImT_filtered(1)%sf(i, j, k)**2 & 
+                    mag_F_IMET%sf(i, j, k) = sqrt(pImT_filtered(1)%sf(i, j, k)**2 & 
                                                + pImT_filtered(2)%sf(i, j, k)**2 & 
                                                + pImT_filtered(3)%sf(i, j, k)**2)
                 end do
@@ -1696,7 +1731,7 @@ contains
         end do
 
         open(unit=106, file='F_IMET.bin', status='replace', form='unformatted', access='stream')
-        write(106) mag_F_IMET
+        write(106) mag_F_IMET%sf(0:m, 0:n, 0:p)
         close(106)  
 
     end subroutine s_compute_interphase_momentum_exchange_term
@@ -2146,7 +2181,7 @@ contains
         end if
 
         if (fourier_transform_filtering) then 
-            do i = 1, sys_size+1
+            do i = 1, sys_size
                 @:DEALLOCATE(q_cons_filtered(i)%sf)
             end do
             @:DEALLOCATE(q_cons_filtered)
@@ -2181,6 +2216,10 @@ contains
                 @:DEALLOCATE(F_IMET(i)%sf)
             end do
             @:DEALLOCATE(F_IMET)
+
+            @:DEALLOCATE(mag_div_Ru%sf)
+            @:DEALLOCATE(mag_div_R_mu%sf)
+            @:DEALLOCATE(mag_F_IMET%sf)
         end if
         
         if (compute_CD_vi) then

@@ -1087,8 +1087,8 @@ contains
             allocate (MPI_IO_DATA%view(1:sys_size + 1))
             allocate (MPI_IO_DATA%var(1:sys_size + 1))
         else if (fourier_transform_filtering) then
-            allocate (MPI_IO_DATA%view(1:2*sys_size+1))
-            allocate (MPI_IO_DATA%var(1:2*sys_size+1))
+            allocate (MPI_IO_DATA%view(1:2*sys_size+3))
+            allocate (MPI_IO_DATA%var(1:2*sys_size+3))
         else
             allocate (MPI_IO_DATA%view(1:sys_size))
             allocate (MPI_IO_DATA%var(1:sys_size))
@@ -1109,7 +1109,7 @@ contains
                 MPI_IO_DATA%var(i)%sf => null()
             end do
         else if (fourier_transform_filtering) then 
-            do i = sys_size+1, 2*sys_size+1
+            do i = sys_size+1, 2*sys_size+3
                 allocate (MPI_IO_DATA%var(i)%sf(0:m, 0:n, 0:p))
                 MPI_IO_DATA%var(i)%sf => null()
             end do
@@ -1304,7 +1304,7 @@ contains
                     MPI_IO_DATA%var(i)%sf => null()
                 end do
             else if (fourier_transform_filtering) then 
-                do i = 1, 2*sys_size+1
+                do i = 1, 2*sys_size+3
                     MPI_IO_DATA%var(i)%sf => null()
                 end do
             else

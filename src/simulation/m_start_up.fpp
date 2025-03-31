@@ -1411,7 +1411,9 @@ contains
             if (lag_params%write_bubbles_stats) call s_write_lag_bubble_stats()
         else
             if (fourier_transform_filtering) then
-                call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count, q_cons_filtered=q_cons_filtered)
+                call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count, &
+                                        q_cons_filtered=q_cons_filtered, &
+                                        mag_div_Ru=mag_div_Ru, mag_div_R_mu=mag_div_R_mu, mag_F_IMET=mag_F_IMET)
             else 
                 call s_write_data_files(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, save_count)
             end if

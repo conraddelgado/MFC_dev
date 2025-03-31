@@ -618,7 +618,7 @@ contains
 
         ! variables for drag calculation
         type(scalar_field), dimension(momxb:momxe), intent(inout) :: rhs_rhouu
-        type(vector_field), dimension(1:3), intent(inout) :: du_dxyz
+        type(vector_field), dimension(momxb:momxe), intent(inout) :: du_dxyz
 
         call nvtxStartRange("COMPUTE-RHS")
 
@@ -696,18 +696,19 @@ contains
         end if
 
         ! drag calculation spatial velocity derivatives
-        if (compute_CD_si) then
+        if (compute_CD_si .or. fourier_transform_filtering) then
             !$acc parallel loop collapse(4) gang vector default(present)
-            do l = 1, 3
+            do l = momxb, momxe
                 do i = idwbuff(1)%beg, idwbuff(1)%end
                     do j = idwbuff(2)%beg, idwbuff(2)%end
                         do k = idwbuff(3)%beg, idwbuff(3)%end
-                            du_dxyz(l)%vf(1)%sf(i, j, k) = dq_prim_dx_qp(1)%vf(l+1)%sf(i, j, k) ! dudx
-                            du_dxyz(l)%vf(2)%sf(i, j, k) = dq_prim_dy_qp(1)%vf(l+1)%sf(i, j, k) ! dudy
-                            du_dxyz(l)%vf(3)%sf(i, j, k) = dq_prim_dz_qp(1)%vf(l+1)%sf(i, j, k) ! dudz
+                            du_dxyz(l)%vf(1)%sf(i, j, k) = dq_prim_dx_qp(1)%vf(l)%sf(i, j, k) ! du{1,2,3}dx
+                            du_dxyz(l)%vf(2)%sf(i, j, k) = dq_prim_dy_qp(1)%vf(l)%sf(i, j, k) ! du{1,2,3}dy
+                            du_dxyz(l)%vf(3)%sf(i, j, k) = dq_prim_dz_qp(1)%vf(l)%sf(i, j, k) ! du{1,2,3}dz
                         end do 
                     end do
                 end do
+                !print *, du_dxyz(momxb)%vf(1)%sf(i-1, j-1, k-1), maxval(du_dxyz(l)%vf(1)%sf(:,:,:)), maxval(dq_prim_dx_qp(1)%vf(l)%sf(:,:,:))
             end do
         end if 
 

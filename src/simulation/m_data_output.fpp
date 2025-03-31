@@ -76,7 +76,7 @@ contains
         !! @param q_cons_vf Conservative variables
         !! @param q_prim_vf Primitive variables
         !! @param t_step Current time step
-    subroutine s_write_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta, q_cons_filtered)
+    subroutine s_write_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta, q_cons_filtered, mag_div_Ru, mag_div_R_mu, mag_F_IMET)
 
         type(scalar_field), &
             dimension(sys_size), &
@@ -94,12 +94,15 @@ contains
         type(scalar_field), &
             intent(inout), optional :: beta
 
-        type(scalar_field), dimension(sys_size+1), intent(inout), optional :: q_cons_filtered
+        type(scalar_field), dimension(sys_size), intent(inout), optional :: q_cons_filtered
+        type(scalar_field), intent(inout), optional :: mag_div_Ru
+        type(scalar_field), intent(inout), optional :: mag_div_R_mu
+        type(scalar_field), intent(inout), optional :: mag_F_IMET
 
         if (.not. parallel_io) then
             call s_write_serial_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, beta)
         else
-            call s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered)
+            call s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered, mag_div_Ru, mag_div_R_mu, mag_F_IMET)
         end if
 
     end subroutine s_write_data_files
@@ -788,13 +791,16 @@ contains
         !!  @param q_prim_vf Cell-average primitive variables
         !!  @param t_step Current time-step
         !!  @param beta Eulerian void fraction from lagrangian bubbles
-    subroutine s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered)
+    subroutine s_write_parallel_data_files(q_cons_vf, q_prim_vf, t_step, beta, q_cons_filtered, mag_div_Ru, mag_div_R_mu, mag_F_IMET)
 
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         integer, intent(in) :: t_step
         type(scalar_field), intent(inout), optional :: beta
-        type(scalar_field), dimension(sys_size+1), intent(inout), optional :: q_cons_filtered
+        type(scalar_field), dimension(sys_size), intent(inout), optional :: q_cons_filtered
+        type(scalar_field), intent(inout), optional :: mag_div_Ru
+        type(scalar_field), intent(inout), optional :: mag_div_R_mu
+        type(scalar_field), intent(inout), optional :: mag_F_IMET
 
 #ifdef MFC_MPI
 
@@ -817,7 +823,7 @@ contains
         if (present(beta)) then
             alt_sys = sys_size + 1
         else if (present(q_cons_filtered)) then
-            alt_sys = 2*sys_size+1
+            alt_sys = 2*sys_size+3
         else
             alt_sys = sys_size
         end if
@@ -902,7 +908,9 @@ contains
 
             if (ib) then    
                 if (present(q_cons_filtered)) then 
-                    call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, q_cons_filtered=q_cons_filtered)
+                    call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, &
+                                               q_cons_filtered=q_cons_filtered, &
+                                               mag_div_Ru=mag_div_Ru, mag_div_R_mu=mag_div_R_mu, mag_F_IMET=mag_F_IMET)
                 else 
                     call s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm)
                 end if
@@ -962,7 +970,7 @@ contains
                 end if
 
             else if (fourier_transform_filtering) then
-                do i = 1, 2*sys_size+1
+                do i = 1, alt_sys
                     var_MOK = int(i, MPI_OFFSET_KIND)
 
                     ! Initial displacement to skip at beginning of file

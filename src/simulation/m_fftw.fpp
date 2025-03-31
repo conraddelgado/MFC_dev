@@ -151,20 +151,29 @@ contains
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
     subroutine s_initialize_fftw_explicit_filter_module
         integer :: ierr
-        integer(c_size_t) :: local_n0
         integer(c_size_t) :: start_idx_temp
-        integer(c_size_t) :: alloc_local
-        
+        integer(c_intptr_t) :: alloc_local, local_n0, local_0_start
+        integer(c_intptr_t) :: cptr_M_glb, cptr_N_glb
+        integer(c_size_t) :: m_glb_temp
+        integer(c_size_t), pointer :: m_glb_ptr
+        type(c_ptr) :: cptr_L_glb
 
+        !m_glb_temp = int(m_glb+1, C_SIZE_T)
+        !cptr_L_glb = c_loc(m_glb_temp)
+
+        !cptr_L_glb = 
+        !cptr_M_glb = n_glb 
+        !cptr_N_glb = p_glb
+        
         include 'fftw3-mpi.f03'
         print *, 'FFTW SETUP...'
         print *, 'MPI', num_procs, proc_rank
-        print *, 'mnp', m, n, p
+        print *, 'mnp', m, n, p, m_glb, n_glb, p_glb
         print *, 'idx', start_idx(1), start_idx(2), start_idx(3)
 
-        call fftw_mpi_init()
+        call fftw_mpi_init
         start_idx_temp = start_idx(1)
-        !call fftw_mpi_local_size_3d(int((m_glb+1)/2+1, c_size_t), int(n_glb+1, c_size_t), int(p_glb+1, c_size_t), MPI_COMM_WORLD, alloc_local, int(start_idx_temp, c_size_t))
+        !alloc_local = fftw_mpi_local_size_3d(N_glb, M_glb, L_glb MPI_COMM_WORLD, alloc_local, int(start_idx_temp, c_size_t))
 
         ! data setup 
         p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
@@ -192,7 +201,7 @@ contains
         real(dp) :: Lx, Ly, Lz
         real(dp) :: x_r, y_r, z_r  
         real(dp) :: r
-        real(dp) :: G_norm_int
+        real(dp) :: G_norm_int, G_norm_int_glb
         integer :: i, j, k
 
         sigma = 3._dp * patch_ib(1)%radius
@@ -218,7 +227,9 @@ contains
             end do
         end do
 
-        array_kernelG_in = array_kernelG_in / G_norm_int ! normalize gaussian, integrate to unity over domain
+        call s_mpi_allreduce_sum(G_norm_int, G_norm_int_glb) 
+
+        array_kernelG_in = array_kernelG_in / G_norm_int_glb ! normalize gaussian, integrate to unity over domain
 
         call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
         
@@ -228,7 +239,7 @@ contains
 
     subroutine s_apply_fftw_filter_cons(q_cons_vf, q_cons_filtered, q_vel_filtered, volfrac_phi)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), dimension(sys_size+1), intent(inout) :: q_cons_filtered
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
         type(scalar_field), dimension(momxb:momxe), intent(inout) :: q_vel_filtered
 
         real(dp) :: volfrac_phi
@@ -239,11 +250,7 @@ contains
         do i = 0, m
             do j = 0, n 
                 do k = 0, p
-                    if (ib_markers%sf(i, j, k) == 0) then ! in fluid
-                        array_in(i+1, j+1, k+1) = 1._dp 
-                    else
-                        array_in(i+1, j+1, k+1) = 0._dp
-                    end if
+                    array_in(i+1, j+1, k+1) = q_cons_vf(advxb)%sf(i, j, k)
                 end do 
             end do
         end do
@@ -254,7 +261,7 @@ contains
 
         call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-        q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+        q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
 
         ! conservative variables volume filtering
         do l = 1, sys_size
@@ -276,7 +283,7 @@ contains
 
             call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-            q_cons_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
+            q_cons_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
                         
         end do 
 
@@ -300,7 +307,7 @@ contains
 
             call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-            q_vel_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
+            q_vel_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
                         
         end do 
 
@@ -309,7 +316,7 @@ contains
     subroutine s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered)
         type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
-        type(scalar_field), dimension(sys_size+1), intent(in) :: q_cons_filtered
+        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
         type(scalar_field), dimension(momxb:momxe), intent(in) :: rhs_rhouu
         type(scalar_field), dimension(1:num_dims), intent(inout) :: pImT_filtered
 
@@ -338,7 +345,7 @@ contains
 
                 call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) 
+                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) 
 
             end do
         end do 
@@ -364,7 +371,7 @@ contains
 
                 call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-                R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p))
+                R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p))
 
             end do
         end do 
@@ -387,7 +394,7 @@ contains
 
             call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-            pImT_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(sys_size+1)%sf(0:m, 0:n, 0:p)) 
+            pImT_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) 
 
         end do
 

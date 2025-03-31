@@ -63,7 +63,7 @@ contains
     !! @param levelset closest distance from every cell to the IB
     !! @param levelset_norm normalized vector from every cell to the closest point to the IB
     !! @param beta Eulerian void fraction from lagrangian bubbles
-    subroutine s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, beta, q_cons_filtered)
+    subroutine s_initialize_mpi_data(q_cons_vf, ib_markers, levelset, levelset_norm, beta, q_cons_filtered, mag_div_Ru, mag_div_R_mu, mag_F_IMET)
 
         type(scalar_field), &
             dimension(sys_size), &
@@ -84,7 +84,10 @@ contains
         type(scalar_field), &
             intent(in), optional :: beta
 
-        type(scalar_field), dimension(sys_size+1), intent(in), optional :: q_cons_filtered
+        type(scalar_field), dimension(sys_size), intent(in), optional :: q_cons_filtered
+        type(scalar_field), intent(in), optional :: mag_div_Ru
+        type(scalar_field), intent(in), optional :: mag_div_R_mu
+        type(scalar_field), intent(in), optional :: mag_F_IMET
 
         integer, dimension(num_dims) :: sizes_glb, sizes_loc
         integer, dimension(1) :: airfoil_glb, airfoil_loc, airfoil_start
@@ -100,7 +103,7 @@ contains
         if (present(beta)) then
             alt_sys = sys_size + 1
         else if (present(q_cons_filtered)) then
-            alt_sys = 2*sys_size+1
+            alt_sys = 2*sys_size + 3
         else
             alt_sys = sys_size
         end if
@@ -109,9 +112,12 @@ contains
             MPI_IO_DATA%var(i)%sf => q_cons_vf(i)%sf(0:m, 0:n, 0:p)
         end do
         if (present(q_cons_filtered)) then 
-            do i = sys_size+1, 2*sys_size+1
+            do i = sys_size+1, 2*sys_size
                 MPI_IO_DATA%var(i)%sf => q_cons_filtered(i-sys_size)%sf(0:m, 0:n, 0:p)
             end do
+            MPI_IO_DATA%var(2*sys_size+1)%sf => mag_div_Ru%sf(0:m, 0:n, 0:p)
+            MPI_IO_DATA%var(2*sys_size+2)%sf => mag_div_R_mu%sf(0:m, 0:n, 0:p)
+            MPI_IO_DATA%var(2*sys_size+3)%sf => mag_F_IMET%sf(0:m, 0:n, 0:p)
         end if 
 
         if (present(beta)) then

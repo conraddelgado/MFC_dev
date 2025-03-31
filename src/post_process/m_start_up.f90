@@ -310,13 +310,35 @@ contains
 
         ! Adding filtered quantities
         if (q_filtered_wrt) then
-            do i = 1, sys_size+1
+            ! filtered cons vars
+            do i = 1, sys_size
                 q_sf = q_cons_filtered(i)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
                 write (varname, '(A,I0)') 'q_cons_filtered', i
                 call s_write_variable_to_formatted_database_file(varname, t_step)
 
                 varname(:) = ' '
             end do
+
+            ! PT Re stress
+            q_sf = mag_div_Ru%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+            write (varname, '(A,I0)') 'mag_div_Ru'
+            call s_write_variable_to_formatted_database_file(varname, t_step)
+
+            varname(:) = ' '
+
+            ! effective viscosity
+            q_sf = mag_div_R_mu%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+            write (varname, '(A,I0)') 'mag_div_R_mu'
+            call s_write_variable_to_formatted_database_file(varname, t_step)
+
+            varname(:) = ' '
+
+            ! interphase momentum exchange
+            q_sf = mag_F_IMET%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+            write (varname, '(A,I0)') 'mag_F_IMET'
+            call s_write_variable_to_formatted_database_file(varname, t_step)
+
+            varname(:) = ' '
         end if
 
         ! Adding the species' concentrations to the formatted database file

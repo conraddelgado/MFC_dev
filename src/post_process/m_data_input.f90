@@ -61,6 +61,9 @@ module m_data_input
     type(integer_field), public :: ib_markers
 
     type(scalar_field), allocatable, dimension(:), public :: q_cons_filtered
+    type(scalar_field), public :: mag_div_Ru
+    type(scalar_field), public :: mag_div_R_mu
+    type(scalar_field), public :: mag_F_IMET
 
     procedure(s_read_abstract_data_files), pointer :: s_read_data_files => null()
 
@@ -298,6 +301,8 @@ contains
 
         if (bubbles_lagrange) then
             alt_sys = sys_size + 1
+        else if (q_filtered_wrt) then 
+            alt_sys = 2*sys_size + 3
         else
             alt_sys = sys_size
         end if
@@ -457,7 +462,9 @@ contains
                 ! Initialize MPI data I/O
                 if (ib) then
                     if (q_filtered_wrt) then 
-                        call s_initialize_mpi_data(q_cons_vf, ib_markers, q_cons_filtered=q_cons_filtered)
+                        call s_initialize_mpi_data(q_cons_vf, ib_markers, &
+                                                   q_cons_filtered=q_cons_filtered, & 
+                                                   mag_div_Ru=mag_div_Ru, mag_div_R_mu=mag_div_R_mu, mag_F_IMET=mag_F_IMET)
                     else 
                         call s_initialize_mpi_data(q_cons_vf, ib_markers)
                     end if
@@ -493,7 +500,7 @@ contains
                                                mpi_p, status, ierr)
                     end do
                 else if (q_filtered_wrt) then 
-                    do i = 1, 2*sys_size+1
+                    do i = 1, alt_sys
                         var_MOK = int(i, MPI_OFFSET_KIND)
 
                         ! Initial displacement to skip at beginning of file
@@ -1335,10 +1342,16 @@ contains
                     q_particle%sf(-j, 0:n, 0:p) = &
                         q_particle%sf((m + 1) - j, 0:n, 0:p)
                 else
-                    do i = 1, sys_size+1
+                    do i = 1, sys_size
                         q_cons_filtered(i)%sf(-j, 0:n, 0:p) = &
                             q_cons_filtered(i)%sf((m + 1) - j, 0:n, 0:p)
                     end do
+                    mag_div_Ru%sf(-j, 0:n, 0:p) = &
+                            mag_div_Ru%sf((m + 1) - j, 0:n, 0:p)
+                    mag_div_R_mu%sf(-j, 0:n, 0:p) = &
+                            mag_div_R_mu%sf((m + 1) - j, 0:n, 0:p)
+                    mag_F_IMET%sf(-j, 0:n, 0:p) = &
+                            mag_F_IMET%sf((m + 1) - j, 0:n, 0:p)
                 end if
             end do
 
@@ -1346,10 +1359,12 @@ contains
         else
             if (present(q_particle)) then
                 call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                             'beg', 'x', q_particle)
+                                                             'beg', 'x', q_particle, & 
+                                                             mag_div_Ru, mag_div_R_mu, mag_F_IMET)
             else
-                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                             'beg', 'x')
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                             'beg', 'x', & 
+                                                             mag_div_Ru, mag_div_R_mu, mag_F_IMET)
             end if
 
         end if
@@ -1366,6 +1381,12 @@ contains
                         q_cons_filtered(i)%sf(m + j, 0:n, 0:p) = &
                             q_cons_filtered(i)%sf(j - 1, 0:n, 0:p)
                     end do
+                    mag_div_Ru%sf(m + j, 0:n, 0:p) = &
+                            mag_div_Ru%sf(j - 1, 0:n, 0:p)
+                    mag_div_R_mu%sf(m + j, 0:n, 0:p) = &
+                            mag_div_R_mu%sf(j - 1, 0:n, 0:p)
+                    mag_F_IMET%sf(m + j, 0:n, 0:p) = &
+                            mag_F_IMET%sf(j - 1, 0:n, 0:p)
                 end if
             end do
 
@@ -1374,10 +1395,12 @@ contains
 
             if (present(q_particle)) then
                 call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                             'end', 'x', q_particle)
+                                                             'beg', 'x', q_particle, & 
+                                                             mag_div_Ru, mag_div_R_mu, mag_F_IMET)
             else
-                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                             'end', 'x')
+                call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                             'beg', 'x', & 
+                                                             mag_div_Ru, mag_div_R_mu, mag_F_IMET)
             end if
 
         end if
@@ -1400,6 +1423,12 @@ contains
                             q_cons_filtered(i)%sf(:, -j, 0:p) = &
                                 q_cons_filtered(i)%sf(:, (n + 1) - j, 0:p)
                         end do
+                        mag_div_Ru%sf(:, -j, 0:p) = &
+                                mag_div_Ru%sf(:, (n + 1) - j, 0:p)
+                        mag_div_R_mu%sf(:, -j, 0:p) = &
+                                mag_div_R_mu%sf(:, (n + 1) - j, 0:p)
+                        mag_F_IMET%sf(:, -j, 0:p) = &
+                                mag_F_IMET%sf(:, (n + 1) - j, 0:p)
                     end if
                 end do
 
@@ -1407,10 +1436,12 @@ contains
             else
                 if (present(q_particle)) then
                     call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                 'beg', 'y', q_particle)
+                                                                 'beg', 'x', q_particle, & 
+                                                                 mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                 else
-                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                 'beg', 'y')
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                                 'beg', 'x', & 
+                                                                 mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                 end if
 
             end if
@@ -1427,6 +1458,12 @@ contains
                             q_cons_filtered(i)%sf(:, n + j, 0:p) = &
                                 q_cons_filtered(i)%sf(:, j - 1, 0:p)
                         end do
+                        mag_div_Ru%sf(:, n + j, 0:p) = &
+                                mag_div_Ru%sf(:, j - 1, 0:p)
+                        mag_div_R_mu%sf(:, n + j, 0:p) = &
+                                mag_div_R_mu%sf(:, j - 1, 0:p)
+                        mag_F_IMET%sf(:, n + j, 0:p) = &
+                                mag_F_IMET%sf(:, j - 1, 0:p)
                     end if
                 end do
 
@@ -1435,10 +1472,12 @@ contains
 
                 if (present(q_particle)) then
                     call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                 'end', 'y', q_particle)
+                                                                 'beg', 'x', q_particle, & 
+                                                                 mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                 else
-                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                 'end', 'y')
+                    call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                                 'beg', 'x', & 
+                                                                 mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                 end if
 
             end if
@@ -1461,6 +1500,12 @@ contains
                                 q_cons_filtered(i)%sf(:, :, -j) = &
                                     q_cons_filtered(i)%sf(:, :, (p + 1) - j)
                             end do
+                            mag_div_Ru%sf(:, :, -j) = &
+                                    mag_div_Ru%sf(:, :, (p + 1) - j)
+                            mag_div_R_mu%sf(:, :, -j) = &
+                                    mag_div_R_mu%sf(:, :, (p + 1) - j)
+                            mag_F_IMET%sf(:, :, -j) = &
+                                    mag_F_IMET%sf(:, :, (p + 1) - j)
                         end if
                     end do
 
@@ -1469,10 +1514,12 @@ contains
 
                     if (present(q_particle)) then
                         call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                     'beg', 'z', q_particle)
+                                                                     'beg', 'x', q_particle, & 
+                                                                     mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                     else
-                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                     'beg', 'z')
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                                     'beg', 'x', & 
+                                                                     mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                     end if
 
                 end if
@@ -1489,6 +1536,12 @@ contains
                                 q_cons_filtered(i)%sf(:, :, p + j) = &
                                     q_cons_filtered(i)%sf(:, :, j - 1)
                             end do
+                            mag_div_Ru%sf(:, :, p + j) = &
+                                    mag_div_Ru%sf(:, :, j - 1)
+                            mag_div_R_mu%sf(:, :, p + j) = &
+                                    mag_div_R_mu%sf(:, :, j - 1)
+                            mag_F_IMET%sf(:, :, p + j) = &
+                                    mag_F_IMET%sf(:, :, j - 1)
                         end if
                     end do
 
@@ -1497,10 +1550,12 @@ contains
 
                     if (present(q_particle)) then
                         call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                     'end', 'z', q_particle)
+                                                                     'beg', 'x', q_particle, & 
+                                                                     mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                     else
-                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, &
-                                                                     'end', 'z')
+                        call s_mpi_sendrecv_cons_vars_buffer_regions(q_cons_filtered, & 
+                                                                     'beg', 'x', & 
+                                                                     mag_div_Ru, mag_div_R_mu, mag_F_IMET)
                     end if
 
                 end if
@@ -1526,7 +1581,7 @@ contains
         allocate (q_prim_vf(1:sys_size))
         if (bubbles_lagrange) allocate (q_particle(1))
 
-        if (q_filtered_wrt) allocate (q_cons_filtered(1:sys_size+1))
+        if (q_filtered_wrt) allocate (q_cons_filtered(1:sys_size))
 
         ! Allocating the parts of the conservative and primitive variables
         ! that do require the direct knowledge of the dimensionality of the
@@ -1566,11 +1621,20 @@ contains
                 end if
 
                 if (q_filtered_wrt) then
-                    do i = 1, sys_size+1
+                    do i = 1, sys_size
                         allocate (q_cons_filtered(i)%sf(-buff_size:m + buff_size, &
                                                         -buff_size:n + buff_size, &
                                                         -buff_size:p + buff_size))
                     end do
+                    allocate (mag_div_Ru%sf(-buff_size:m + buff_size, &
+                                            -buff_size:n + buff_size, &
+                                            -buff_size:p + buff_size))
+                    allocate (mag_div_R_mu%sf(-buff_size:m + buff_size, &
+                                              -buff_size:n + buff_size, &
+                                              -buff_size:p + buff_size))
+                    allocate (mag_F_IMET%sf(-buff_size:m + buff_size, &
+                                            -buff_size:n + buff_size, &
+                                            -buff_size:p + buff_size))
                 end if 
 
                 ! Simulation is 2D
@@ -1666,9 +1730,12 @@ contains
         end if
 
         if (q_filtered_wrt) then 
-            do i = 1, sys_size+1 
+            do i = 1, sys_size
                 deallocate (q_cons_filtered(i)%sf)
             end do
+            deallocate (mag_div_Ru%sf)
+            deallocate (mag_div_R_mu%sf)
+            deallocate (mag_F_IMET%sf)
         end if
 
         s_read_data_files => null()
