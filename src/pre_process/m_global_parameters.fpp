@@ -250,6 +250,7 @@ module m_global_parameters
 
     logical :: periodic_ibs !< immersed boundaries respect periodicity of domain
     logical :: store_levelset 
+    logical :: pencil_domain_decomposition
 
 contains
 
@@ -494,6 +495,7 @@ contains
 
         periodic_ibs = .false.
         store_levelset = .true.
+        pencil_domain_decomposition = .false.
 
     end subroutine s_assign_default_values_to_user_inputs
 

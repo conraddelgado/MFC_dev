@@ -696,7 +696,7 @@ contains
         end if
 
         ! drag calculation spatial velocity derivatives
-        if (compute_CD_si .or. fourier_transform_filtering) then
+        if (compute_CD_si) then
             !$acc parallel loop collapse(4) gang vector default(present)
             do l = momxb, momxe
                 do i = idwbuff(1)%beg, idwbuff(1)%end

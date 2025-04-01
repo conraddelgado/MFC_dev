@@ -25,10 +25,10 @@ mu = rho*v1*D/Re # dynamic viscosity for current case
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 4.0E-06
-Nt = 50
+Nt = 5
 t_save = 1
 
-Nx = 63
+Nx = 255
 Ny = Nx
 Nz = Ny
 
@@ -147,6 +147,7 @@ case_dict = {
     "mu_visc": mu,
 
     "store_levelset": "F",
+    "pencil_domain_decomposition": "T", 
     }
 
 case_dict.update(ib_dict)

@@ -163,6 +163,7 @@ module m_global_parameters
     real(wp) :: mu_visc 
 
     logical :: store_levelset !< store levelset and levelset_norm data, if false: compute levelset on fly
+    logical :: pencil_domain_decomposition
 
     !$acc declare create(chemistry)
 
@@ -564,6 +565,7 @@ contains
         mu_visc = dflt_real
 
         store_levelset = .true.
+        pencil_domain_decomposition = .false.
 
         #:if not MFC_CASE_OPTIMIZATION
             mapped_weno = .false.

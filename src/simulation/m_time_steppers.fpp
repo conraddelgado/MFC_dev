@@ -335,7 +335,7 @@ contains
             @:ALLOCATE(F_D_vi(num_ibs))
         end if
 
-        if (compute_CD_si .or. fourier_transform_filtering) then
+        if (compute_CD_si) then
             @:ALLOCATE(du_dxyz(momxb:momxe))
 
             do i = momxb, momxe
@@ -1555,7 +1555,7 @@ contains
                 do i = 1, num_dims
                     do j = 1, num_dims
                         do k = 1, num_dims  
-                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, j)
+                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, k)
                         end do 
                     end do 
                 end do
@@ -1665,7 +1665,7 @@ contains
                 do i = 1, num_dims
                     do j = 1, num_dims
                         do k = 1, num_dims  
-                            R_mu(l)%vf(q)%sf(i, j, k) = R_mu(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, j)
+                            R_mu(l)%vf(q)%sf(i, j, k) = R_mu(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, k)
                         end do 
                     end do 
                 end do

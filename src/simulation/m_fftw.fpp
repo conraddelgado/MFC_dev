@@ -165,14 +165,16 @@ contains
         !cptr_M_glb = n_glb 
         !cptr_N_glb = p_glb
         
-        include 'fftw3-mpi.f03'
-        print *, 'FFTW SETUP...'
-        print *, 'MPI', num_procs, proc_rank
-        print *, 'mnp', m, n, p, m_glb, n_glb, p_glb
-        print *, 'idx', start_idx(1), start_idx(2), start_idx(3)
+        !include 'fftw3-mpi.f03'
+        if (proc_rank == 0) then
+            print *, 'FFTW SETUP...'
+            print *, 'MPI', num_procs, proc_rank
+            print *, 'mnp', m, n, p, m_glb, n_glb, p_glb
+            print *, 'idx', start_idx(1), start_idx(2), start_idx(3)
+        end if
 
-        call fftw_mpi_init
-        start_idx_temp = start_idx(1)
+        !call fftw_mpi_init
+        !start_idx_temp = start_idx(1)
         !alloc_local = fftw_mpi_local_size_3d(N_glb, M_glb, L_glb MPI_COMM_WORLD, alloc_local, int(start_idx_temp, c_size_t))
 
         ! data setup 

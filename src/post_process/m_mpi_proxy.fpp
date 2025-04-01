@@ -168,7 +168,7 @@ contains
             & 'prim_vars_wrt', 'c_wrt', 'qm_wrt','schlieren_wrt', 'bubbles_euler', 'qbmm',   &
             & 'polytropic', 'polydisperse', 'file_per_process', 'relax', 'cf_wrt',     &
             & 'adv_n', 'ib', 'cfl_adap_dt', 'cfl_const_dt', 'cfl_dt',          &
-            & 'surface_tension', 'hyperelasticity', 'bubbles_lagrange', 'rkck_adap_dt', 'output_partial_domain', 'q_filtered_wrt' ]
+            & 'surface_tension', 'hyperelasticity', 'bubbles_lagrange', 'rkck_adap_dt', 'output_partial_domain', 'q_filtered_wrt', 'pencil_domain_decomposition' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -286,6 +286,54 @@ contains
                                 num_procs_y = num_procs/i
                                 fct_min = abs((m + 1)/tmp_num_procs_x &
                                               - (n + 1)/tmp_num_procs_y)
+                                ierr = 0
+
+                            end if
+
+                        end if
+
+                    end do
+
+                else if (pencil_domain_decomposition) then 
+                    if (proc_rank == 0) then 
+                        print *, 'pencil domain decomposition...'
+                    end if
+
+                    ! continuous x direction 
+                    ! block decomposition in x and y
+                    ! Initial values of the processor factorization optimization
+                    num_procs_x = 1
+                    num_procs_y = 1
+                    num_procs_z = num_procs
+                    ierr = -1
+
+                    ! Computing minimization variable for these initial values
+                    tmp_num_procs_y = num_procs_y
+                    tmp_num_procs_z = num_procs_z
+                    fct_min = 10._wp*abs((n + 1)/tmp_num_procs_y &
+                                        - (p + 1)/tmp_num_procs_z)
+
+                    ! Searching for optimal computational domain distribution
+                    do i = 1, num_procs
+
+                        if (mod(num_procs, i) == 0 &
+                            .and. &
+                            (n + 1)/i >= num_stcls_min*weno_order) then
+
+                            tmp_num_procs_y = i
+                            tmp_num_procs_z = num_procs/i
+
+                            if (fct_min >= abs((n + 1)/tmp_num_procs_y &
+                                            - (p + 1)/tmp_num_procs_z) &
+                                .and. &
+                                (p + 1)/tmp_num_procs_z &
+                                >= &
+                                num_stcls_min*weno_order) then
+
+                                num_procs_y = i
+                                num_procs_z = num_procs/i
+                                fct_min = abs((n + 1)/tmp_num_procs_y &
+                                            - (p + 1)/tmp_num_procs_z)
                                 ierr = 0
 
                             end if

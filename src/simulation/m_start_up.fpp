@@ -176,7 +176,7 @@ contains
             compute_CD_vi, compute_CD_si, & 
             fourier_transform_filtering, &
             u_inf_ref, rho_inf_ref, T_inf_ref, mu_visc, &
-            store_levelset
+            store_levelset, pencil_domain_decomposition
 
         ! Checking that an input file has been provided by the user. If it
         ! has, then the input file is read in, otherwise, simulation exits.

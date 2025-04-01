@@ -141,7 +141,7 @@ contains
             palpha_eps, ptgalpha_eps, ib, num_ibs, patch_ib, &
             sigma, adv_n, cfl_adap_dt, cfl_const_dt, n_start, &
             n_start_old, surface_tension, hyperelasticity, pre_stress, rkck_adap_dt, &
-            periodic_ibs, store_levelset
+            periodic_ibs, store_levelset, pencil_domain_decomposition
 
         ! Inquiring the status of the pre_process.inp file
         file_loc = 'pre_process.inp'

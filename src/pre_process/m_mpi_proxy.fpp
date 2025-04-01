@@ -55,7 +55,7 @@ contains
             & 'mixlayer_perturb', 'bubbles_euler', 'polytropic', 'polydisperse',&
             & 'qbmm', 'file_per_process', 'adv_n', 'ib' , 'cfl_adap_dt',       &
             & 'cfl_const_dt', 'cfl_dt', 'surface_tension',                     &
-            & 'hyperelasticity', 'pre_stress', 'periodic_ibs', 'store_levelset' ]
+            & 'hyperelasticity', 'pre_stress', 'periodic_ibs', 'store_levelset', 'pencil_domain_decomposition' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
         call MPI_BCAST(fluid_rho(1), num_fluids_max, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
@@ -223,7 +223,55 @@ contains
 
                     end do
 
-                else
+                else if (pencil_domain_decomposition) then 
+                    if (proc_rank == 0) then 
+                        print *, 'pencil domain decomposition...'
+                    end if
+
+                    ! continuous x direction 
+                    ! block decomposition in x and y
+                    ! Initial values of the processor factorization optimization
+                    num_procs_x = 1
+                    num_procs_y = 1
+                    num_procs_z = num_procs
+                    ierr = -1
+
+                    ! Computing minimization variable for these initial values
+                    tmp_num_procs_y = num_procs_y
+                    tmp_num_procs_z = num_procs_z
+                    fct_min = 10._wp*abs((n + 1)/tmp_num_procs_y &
+                                        - (p + 1)/tmp_num_procs_z)
+
+                    ! Searching for optimal computational domain distribution
+                    do i = 1, num_procs
+
+                        if (mod(num_procs, i) == 0 &
+                            .and. &
+                            (n + 1)/i >= num_stcls_min*weno_order) then
+
+                            tmp_num_procs_y = i
+                            tmp_num_procs_z = num_procs/i
+
+                            if (fct_min >= abs((n + 1)/tmp_num_procs_y &
+                                            - (p + 1)/tmp_num_procs_z) &
+                                .and. &
+                                (p + 1)/tmp_num_procs_z &
+                                >= &
+                                num_stcls_min*weno_order) then
+
+                                num_procs_y = i
+                                num_procs_z = num_procs/i
+                                fct_min = abs((n + 1)/tmp_num_procs_y &
+                                            - (p + 1)/tmp_num_procs_z)
+                                ierr = 0
+
+                            end if
+
+                        end if
+
+                    end do
+
+                else 
 
                     ! Initial values of the processor factorization optimization
                     num_procs_x = 1
