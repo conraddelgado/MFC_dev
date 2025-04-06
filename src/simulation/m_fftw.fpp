@@ -71,7 +71,22 @@ module m_fftw
 
     integer :: istride, ostride, idist, odist, rank
 #endif
-    ! new
+
+    ! new for explicit filtering of data
+#if defined(MFC_OpenACC)
+    real(dp), allocatable :: real_data_gpu
+    complex(dp), allocatable :: complex_data_gpu
+
+    real(dp), allocatable :: real_kernelG_gpu
+    complex(dp), allocatable :: complex_kernelG_gpu
+
+    integer :: forward_plan_gpu
+    integer :: backward_plan_gpu
+
+    integer :: ierr
+
+    !$acc declare create(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+#else
     type(c_ptr) :: plan_forward
     type(c_ptr) :: plan_backward
 
@@ -89,6 +104,7 @@ module m_fftw
 
     type(c_ptr) :: p_kernelG_real
     type(c_ptr) :: p_kernelG_complex
+#endif
 
 contains
 
@@ -150,32 +166,22 @@ contains
 
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
     subroutine s_initialize_fftw_explicit_filter_module
-        integer :: ierr
-        integer(c_size_t) :: start_idx_temp
-        integer(c_intptr_t) :: alloc_local, local_n0, local_0_start
-        integer(c_intptr_t) :: cptr_M_glb, cptr_N_glb
-        integer(c_size_t) :: m_glb_temp
-        integer(c_size_t), pointer :: m_glb_ptr
-        type(c_ptr) :: cptr_L_glb
 
-        !m_glb_temp = int(m_glb+1, C_SIZE_T)
-        !cptr_L_glb = c_loc(m_glb_temp)
+#if defined(MFC_OpenACC)
+        ! gpu data setup
+        @:ALLOCATE(real_data_gpu(m+1, n+1, p+1))
+        @:ALLOCATE(complex_data_gpu(m+1, n+1, (p+1)/2+1))
 
-        !cptr_L_glb = 
-        !cptr_M_glb = n_glb 
-        !cptr_N_glb = p_glb
-        
-        !include 'fftw3-mpi.f03'
-        if (proc_rank == 0) then
-            print *, 'FFTW SETUP...'
-            print *, 'MPI', num_procs, proc_rank
-            print *, 'mnp', m, n, p, m_glb, n_glb, p_glb
-            print *, 'idx', start_idx(1), start_idx(2), start_idx(3)
-        end if
+        @:ALLOCATE(real_kernelG_gpu(m+1, n+1, p+1))
+        @:ALLOCATE(complex_kernelG_gpu(m+1, n+1, (p+1)/2+1))
 
-        !call fftw_mpi_init
-        !start_idx_temp = start_idx(1)
-        !alloc_local = fftw_mpi_local_size_3d(N_glb, M_glb, L_glb MPI_COMM_WORLD, alloc_local, int(start_idx_temp, c_size_t))
+        ! gpu plan creation
+        ierr = cufftPlan3d(forward_plan_gpu, m, n, p, CUFFT_D2Z)
+        ierr = cufftPlan3d(backward_plan_gpu, m, n, p, CUFFT_Z2D)
+
+#else
+        ! CPU
+        print *, 'FFTW SETUP...'
 
         ! data setup 
         p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
@@ -195,24 +201,71 @@ contains
         call c_f_pointer(p_kernelG_complex, array_kernelG_out, [(m+1)/2+1, n+1, p+1])
 
         plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_MEASURE)
+#endif
 
     end subroutine s_initialize_fftw_explicit_filter_module
 
     subroutine s_initialize_gaussian_filter
-        real(dp) :: sigma
+        real(dp) :: sigma_stddev
         real(dp) :: Lx, Ly, Lz
         real(dp) :: x_r, y_r, z_r  
         real(dp) :: r
         real(dp) :: G_norm_int, G_norm_int_glb
         integer :: i, j, k
 
-        sigma = 3._dp * patch_ib(1)%radius
+        sigma_stddev = 3.0_dp * 0.05_dp
 
         Lx = x_domain_end_glb - x_domain_beg_glb
         Ly = y_domain_end_glb - y_domain_beg_glb  
         Lz = z_domain_end_glb - z_domain_beg_glb    
-
+        
         G_norm_int = 0._dp
+
+#if defined(MFC_OpenACC)    
+        !$acc parallel loop collapse(3) gang vector default(present) copyin(sigma_stddev, Lx, Ly, Lz) reduction(+:G_norm_int)
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p
+                    x_r = min(abs(x_cc(i) - x_domain_beg_glb), Lx - abs(x_cc(i) - x_domain_beg_glb))
+                    y_r = min(abs(y_cc(j) - y_domain_beg_glb), Ly - abs(y_cc(j) - y_domain_beg_glb))
+                    z_r = min(abs(z_cc(k) - z_domain_beg_glb), Lz - abs(z_cc(k) - z_domain_beg_glb))
+
+                    r = x_r**2 + y_r**2 + z_r**2
+
+                    real_kernelG_gpu(i+1, j+1, k+1) = exp(-r/(2.0_dp*sigma_stddev**2))
+
+                    G_norm_int = G_norm_int + real_kernelG_gpu(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
+                end do 
+            end do 
+        end do
+
+        call s_mpi_allreduce_sum(G_norm_int, G_norm_int_glb) 
+
+        ! normalize the gaussian kernel
+        !$acc parallel loop collapse(3) gang vector default(present) copyin(G_norm_int_glb)
+        do i = 1, m+1 
+            do j = 1, n+1 
+                do k = 1, p+1
+                    real_kernelG_gpu(i, j, k) = real_kernelG_gpu(i, j, k) / G_norm_int_glb
+                end do 
+            end do 
+        end do
+
+        ! perform fourier transform on gaussian kernel
+        ierr = cufftExecD2Z(forward_plan_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+
+        ! normalize transformed kernel (divide by Nx*Ny*Nz)
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, m+1
+            do j = 1, n+1
+                do k = 1, (p+1)/2+1
+                    complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+                end do 
+            end do 
+        end do
+
+#else
+        ! CPU
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
@@ -222,7 +275,7 @@ contains
 
                     r = x_r**2 + y_r**2 + z_r**2
 
-                    array_kernelG_in(i+1, j+1, k+1) = exp(-r/(2._dp*sigma**2))
+                    array_kernelG_in(i+1, j+1, k+1) = exp(-r/(2._dp*sigma_stddev**2))
 
                     G_norm_int = G_norm_int + array_kernelG_in(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
                 end do 
@@ -236,6 +289,7 @@ contains
         call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
         
         array_kernelG_out = array_kernelG_out / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp)) ! normalize DFT
+#endif
 
     end subroutine s_initialize_gaussian_filter
 
@@ -248,6 +302,44 @@ contains
 
         integer :: i, j, k, l, q
 
+#if defined(MFC_OpenACC)
+        ! fluid indicator function
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p
+                    real_data_gpu(i+1, j+1, k+1) = q_cons_vf(advxb)%sf(i, j, k)
+                end do 
+            end do 
+        end do 
+
+        ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
+
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, m+1
+            do j = 1, n+1 
+                do k = 1, (p+1)/2+1
+                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
+
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p 
+                    q_cons_filtered(advxb)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+                end do
+            end do
+        end do
+
+        ! cons vars filtering
+
+
+#else 
+        ! CPU
         ! volume filter fluid volume fraction
         do i = 0, m
             do j = 0, n 
@@ -266,15 +358,11 @@ contains
         q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
 
         ! conservative variables volume filtering
-        do l = 1, sys_size
+        do l = 1, sys_size-1
             do i = 0, m
                 do j = 0, n 
                     do k = 0, p
-                        if (ib_markers%sf(i, j, k) == 0) then
-                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)
-                        else
-                            array_in(i+1, j+1, k+1) = 0._dp
-                        end if
+                        array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k) * q_cons_vf(advxb)%sf(i, j, k)
                     end do 
                 end do
             end do
@@ -312,6 +400,7 @@ contains
             q_vel_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
                         
         end do 
+#endif
 
     end subroutine s_apply_fftw_filter_cons
 
