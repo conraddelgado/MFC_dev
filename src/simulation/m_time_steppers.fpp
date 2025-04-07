@@ -812,7 +812,7 @@ contains
 
         
         if (fourier_transform_filtering) then
-            call s_apply_fftw_filter_cons(q_cons_ts(1)%vf, q_cons_filtered, q_vel_filtered, volfrac_phi) ! filter conservative variables
+            call s_apply_fftw_filter_cons(q_cons_ts(1)%vf, q_cons_filtered) ! filter conservative variables
 
             write(103) q_cons_filtered(sys_size)%sf(0:m, 0:n, 0:p) !q_cons_filtered(sys_size+1)%sf(:, :, :)
 
@@ -1466,67 +1466,75 @@ contains
 
         integer :: i, j, k, l, q
 
-            ! pseudo turbulent reynolds stress setup
-            do l = 1, num_dims
-                do q = 1, num_dims
-                    do i = 0, m
-                        do j = 0, n
-                            do k = 0, p
-                                pt_Re_stress(l)%vf(q)%sf(i, j, k) = (q_cons_vf(momxb-1+l)%sf(i, j, k) * q_cons_vf(momxb-1+q)%sf(i, j, k)) / q_cons_vf(1)%sf(i, j, k) ! (rho*u x rho*u)/rho = rho*(u x u) 
-                            end do
+        ! pseudo turbulent reynolds stress setup
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    !$acc loop seq
+                    do l = 1, num_dims
+                        !$acc loop seq
+                        do q = 1, num_dims
+                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = (q_cons_vf(momxb-1+l)%sf(i, j, k) * q_cons_vf(momxb-1+q)%sf(i, j, k)) / q_cons_vf(1)%sf(i, j, k) ! (rho*u x rho*u)/rho = rho*(u x u) 
                         end do
                     end do
-                end do 
-            end do
+                end do
+            end do 
+        end do
 
-            ! set density and momentum buffers
-            do i = 1, momxe
-                q_cons_vf(i)%sf(-buff_size:-1, :, :) = q_cons_vf(i)%sf(m-buff_size+1:m, :, :)
-                q_cons_vf(i)%sf(m+1:m+buff_size, :, :) = q_cons_vf(i)%sf(0:buff_size-1, :, :)
+        ! set density and momentum buffers
+#if defined(MFC_OpenACC)
 
-                q_cons_vf(i)%sf(:, -buff_size:-1, :) = q_cons_vf(i)%sf(:, n-buff_size+1:n, :)
-                q_cons_vf(i)%sf(:, n+1:n+buff_size, :) = q_cons_vf(i)%sf(:, 0:buff_size-1, :)
+#else
+        do i = 1, momxe
+            q_cons_vf(i)%sf(-buff_size:-1, :, :) = q_cons_vf(i)%sf(m-buff_size+1:m, :, :)
+            q_cons_vf(i)%sf(m+1:m+buff_size, :, :) = q_cons_vf(i)%sf(0:buff_size-1, :, :)
 
-                q_cons_vf(i)%sf(:, :, -buff_size:-1) = q_cons_vf(i)%sf(:, :, p-buff_size+1:p)
-                q_cons_vf(i)%sf(:, :, p+1:p+buff_size) = q_cons_vf(i)%sf(:, :, 0:buff_size-1)
-            end do
-            
-            ! R_mu setup
-            do i = 0, m
-                do j = 0, n
-                    do k = 0, p
-                        R_mu(1)%vf(1)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
+            q_cons_vf(i)%sf(:, -buff_size:-1, :) = q_cons_vf(i)%sf(:, n-buff_size+1:n, :)
+            q_cons_vf(i)%sf(:, n+1:n+buff_size, :) = q_cons_vf(i)%sf(:, 0:buff_size-1, :)
 
-                        R_mu(2)%vf(2)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
+            q_cons_vf(i)%sf(:, :, -buff_size:-1) = q_cons_vf(i)%sf(:, :, p-buff_size+1:p)
+            q_cons_vf(i)%sf(:, :, p+1:p+buff_size) = q_cons_vf(i)%sf(:, :, 0:buff_size-1)
+        end do
+#endif
+        
+        ! R_mu setup
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    R_mu(1)%vf(1)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(3)%vf(3)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k)) & 
-                                                  - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
+                    R_mu(2)%vf(2)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(1)%vf(2)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+1)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+1)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
-                                                
-                        R_mu(2)%vf(1)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k)
+                    R_mu(3)%vf(3)%sf(i, j, k) = mu_visc * (2._wp*(q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k)) & 
+                                                - 2._wp/3._wp*((q_cons_vf(momxb)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) & 
+                                                + (q_cons_vf(momxb+1)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+1)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j)) & 
+                                                + (q_cons_vf(momxb+2)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+2)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))))
 
-                        R_mu(1)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+2)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
+                    R_mu(1)%vf(2)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k) & 
+                                                + (q_cons_vf(momxb+1)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+1)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
+                                            
+                    R_mu(2)%vf(1)%sf(i, j, k) = R_mu(1)%vf(2)%sf(i, j, k)
 
-                        R_mu(3)%vf(1)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k)
+                    R_mu(1)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
+                                                + (q_cons_vf(momxb+2)%sf(i+1, j, k)/q_cons_vf(1)%sf(i+1, j, k) - q_cons_vf(momxb+2)%sf(i-1, j, k)/q_cons_vf(1)%sf(i-1, j, k))/(2._wp*dx(i))/q_cons_vf(1)%sf(i, j, k))
 
-                        R_mu(2)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb+1)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+1)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
-                                                  + (q_cons_vf(momxb+2)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+2)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k))
+                    R_mu(3)%vf(1)%sf(i, j, k) = R_mu(1)%vf(3)%sf(i, j, k)
 
-                        R_mu(3)%vf(2)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k)
-                    end do
+                    R_mu(2)%vf(3)%sf(i, j, k) = mu_visc * ((q_cons_vf(momxb+1)%sf(i, j, k+1)/q_cons_vf(1)%sf(i, j, k+1) - q_cons_vf(momxb+1)%sf(i, j, k-1)/q_cons_vf(1)%sf(i, j, k-1))/(2._wp*dz(k))/q_cons_vf(1)%sf(i, j, k) & 
+                                                + (q_cons_vf(momxb+2)%sf(i, j+1, k)/q_cons_vf(1)%sf(i, j+1, k) - q_cons_vf(momxb+2)%sf(i, j-1, k)/q_cons_vf(1)%sf(i, j-1, k))/(2._wp*dy(j))/q_cons_vf(1)%sf(i, j, k))
+
+                    R_mu(3)%vf(2)%sf(i, j, k) = R_mu(2)%vf(3)%sf(i, j, k)
                 end do
             end do
+        end do
 
     end subroutine s_setup_terms_filtering
 
@@ -1537,11 +1545,14 @@ contains
         real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_Ru
         integer :: i, j, k, l, q    
 
-        do l = 1, num_dims
-            do q = 1, num_dims
-                do i = 0, m 
-                    do j = 0, n 
-                        do k = 0, p
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m 
+            do j = 0, n 
+                do k = 0, p
+                    !$acc loop seq
+                    do l = 1, num_dims
+                        !$acc loop seq
+                        do q = 1, num_dims
                             pt_Re_stress(l)%vf(q)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) &
                                                               - (q_cons_filtered(momxb-1+l)%sf(i, j, k) * q_cons_filtered(momxb-1+q)%sf(i, j, k) / q_cons_filtered(1)%sf(i, j, k))
                         end do
@@ -1550,11 +1561,14 @@ contains
             end do
         end do
 
-        do l = 1, num_dims
-            do q = 1, num_dims
-                do i = 1, num_dims
-                    do j = 1, num_dims
-                        do k = 1, num_dims  
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p  
+                    !$acc loop seq
+                    do l = 1, num_dims
+                        !$acc loop seq
+                        do q = 1, num_dims
                             pt_Re_stress(l)%vf(q)%sf(i, j, k) = pt_Re_stress(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, k)
                         end do 
                     end do 
@@ -1563,6 +1577,9 @@ contains
         end do
 
         ! set boundary buffer zone values
+#if defined(MFC_OpenACC)
+
+#else
         do l = 1, num_dims
             do q = 1, num_dims
                 pt_Re_stress(l)%vf(q)%sf(-buff_size:-1, :, :) = pt_Re_stress(l)%vf(q)%sf(m-buff_size+1:m, :, :)
@@ -1575,12 +1592,15 @@ contains
                 pt_Re_stress(l)%vf(q)%sf(:, :, p+1:p+buff_size) = pt_Re_stress(l)%vf(q)%sf(:, :, 0:buff_size-1)
             end do
         end do
+#endif
 
         ! div(Ru), using CD2 FD scheme 
-        do l = 1, num_dims
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n 
+                do k = 0, p
+                    !$acc loop seq
+                    do l = 1, num_dims
                         div_Ru(l, i, j, k) = (pt_Re_stress(l)%vf(1)%sf(i+1, j, k) - pt_Re_stress(l)%vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) &
                                            + (pt_Re_stress(l)%vf(2)%sf(i, j+1, k) - pt_Re_stress(l)%vf(2)%sf(i, j-1, k))/(2._wp*dy(j)) & 
                                            + (pt_Re_stress(l)%vf(3)%sf(i, j, k+1) - pt_Re_stress(l)%vf(3)%sf(i, j, k-1))/(2._wp*dz(k))
@@ -1589,10 +1609,11 @@ contains
             end do
         end do
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-                    mag_div_Ru%sf(i, j, k) = sqrt(sum(div_Ru(:, i, j, k)**2))
+                    mag_div_Ru%sf(i, j, k) = sqrt(div_Ru(1, i, j, k)**2 + div_Ru(2, i, j, k)**2 + div_Ru(3, i, j, k)**2)
                 end do
             end do
         end do
@@ -1611,6 +1632,10 @@ contains
         integer :: i, j, k, l, q
 
         ! set buffers for filtered momentum quantities and density
+#if defined(MFC_OpenACC)
+
+
+#else
         do i = 1, momxe
             q_cons_filtered(i)%sf(-buff_size:-1, :, :) = q_cons_filtered(i)%sf(m-buff_size+1:m, :, :)
             q_cons_filtered(i)%sf(m+1:m+buff_size, :, :) = q_cons_filtered(i)%sf(0:buff_size-1, :, :)
@@ -1621,8 +1646,10 @@ contains
             q_cons_filtered(i)%sf(:, :, -buff_size:-1) = q_cons_filtered(i)%sf(:, :, p-buff_size+1:p)
             q_cons_filtered(i)%sf(:, :, p+1:p+buff_size) = q_cons_filtered(i)%sf(:, :, 0:buff_size-1)
         end do
+#endif
 
         ! calculate R_mu
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -1660,11 +1687,14 @@ contains
             end do
         end do
 
-        do l = 1, num_dims
-            do q = 1, num_dims
-                do i = 1, num_dims
-                    do j = 1, num_dims
-                        do k = 1, num_dims  
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p 
+                    !$acc loop seq
+                    do l = 1, num_dims
+                        !$acc loop seq
+                        do q = 1, num_dims
                             R_mu(l)%vf(q)%sf(i, j, k) = R_mu(l)%vf(q)%sf(i, j, k) * q_cons_filtered(advxb)%sf(i, j, k)
                         end do 
                     end do 
@@ -1673,6 +1703,10 @@ contains
         end do
 
         ! set boundary buffer zone values
+#if defined(MFC_OpenACC)
+
+
+#else
         do l = 1, num_dims
             do q = 1, num_dims
                 R_mu(l)%vf(q)%sf(-buff_size:-1, :, :) = R_mu(l)%vf(q)%sf(m-buff_size+1:m, :, :)
@@ -1685,12 +1719,15 @@ contains
                 R_mu(l)%vf(q)%sf(:, :, p+1:p+buff_size) = R_mu(l)%vf(q)%sf(:, :, 0:buff_size-1)
             end do
         end do
+#endif
 
         ! div(R_mu), using CD2 FD scheme 
-        do l = 1, num_dims
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n 
+                do k = 0, p
+                    !$acc loop seq
+                    do l = 1, num_dims
                         div_R_mu(l, i, j, k) = (R_mu(l)%vf(1)%sf(i+1, j, k) - R_mu(l)%vf(1)%sf(i-1, j, k))/(2._wp*dx(i)) &
                                            + (R_mu(l)%vf(2)%sf(i, j+1, k) - R_mu(l)%vf(2)%sf(i, j-1, k))/(2._wp*dy(j)) & 
                                            + (R_mu(l)%vf(3)%sf(i, j, k+1) - R_mu(l)%vf(3)%sf(i, j, k-1))/(2._wp*dz(k))
@@ -1699,10 +1736,11 @@ contains
             end do
         end do
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
-                    mag_div_R_mu%sf(i, j, k) = sqrt(sum(div_R_mu(:, i, j, k)**2))
+                    mag_div_R_mu%sf(i, j, k) = sqrt(div_R_mu(1, i, j, k)**2 + div_R_mu(2, i, j, k)**2 + div_R_mu(3, i, j, k)**2)
                 end do
             end do
         end do
@@ -1720,6 +1758,7 @@ contains
 
         integer :: i, j, k, l, q, ii
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 

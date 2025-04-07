@@ -389,7 +389,7 @@ HANDLE_SOURCES(syscheck OFF)
 #             being used.
 
 function(MFC_SETUP_TARGET)
-    cmake_parse_arguments(ARGS "OpenACC;MPI;SILO;HDF5;FFTW;FFTW_MPI" "TARGET" "SOURCES" ${ARGN})
+    cmake_parse_arguments(ARGS "OpenACC;MPI;SILO;HDF5;FFTW" "TARGET" "SOURCES" ${ARGN})
 
     add_executable(${ARGS_TARGET} ${ARGS_SOURCES})
     set(IPO_TARGETS ${ARGS_TARGET})
@@ -455,7 +455,7 @@ function(MFC_SETUP_TARGET)
                 find_package(FFTW REQUIRED)
                 target_link_libraries(${a_target} PRIVATE FFTW::FFTW)
                 # link FFTW and FFTW-MPI to your executable or library
-                target_link_libraries(${a_target} PRIVATE FFTW_MPI::FFTW_MPI)
+                #target_link_libraries(${a_target} PRIVATE FFTW_MPI::FFTW_MPI)
             endif()
         endif()
 

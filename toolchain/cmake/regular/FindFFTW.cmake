@@ -38,34 +38,34 @@ if (FFTW_FOUND AND NOT TARGET FFTW::FFTW)
     )
 endif()
 
-# find FFTW MPI
-find_path(FFTW_MPI_INCLUDE_DIR
-    NAMES         fftw3.h
-    PATH_SUFFIXES fftw fftw3
-)
+# # find FFTW MPI
+# find_path(FFTW_MPI_INCLUDE_DIR
+#     NAMES         fftw3.h
+#     PATH_SUFFIXES fftw fftw3
+# )
 
-find_library(FFTW_MPI_LIBRARY
-    NAMES         fftw3_mpi
-    PATH_SUFFIXES fftw fftw3
-    NAMES_PER_DIR
-)
+# find_library(FFTW_MPI_LIBRARY
+#     NAMES         fftw3_mpi
+#     PATH_SUFFIXES fftw fftw3
+#     NAMES_PER_DIR
+# )
 
-FIND_PACKAGE_HANDLE_STANDARD_ARGS(
-    FFTW_MPI
-    REQUIRED_VARS
-        FFTW_MPI_LIBRARY
-        FFTW_MPI_INCLUDE_DIR
-)
+# FIND_PACKAGE_HANDLE_STANDARD_ARGS(
+#     FFTW_MPI
+#     REQUIRED_VARS
+#         FFTW_MPI_LIBRARY
+#         FFTW_MPI_INCLUDE_DIR
+# )
 
-# create the imported target for FFTW MPI if found
-if (FFTW_MPI_FOUND AND NOT TARGET FFTW_MPI::FFTW_MPI)
-    set(FFTW_MPI_LIBRARIES    "${FFTW_MPI_LIBRARY}")
-    set(FFTW_MPI_INCLUDE_DIRS "${FFTW_MPI_INCLUDE_DIR}")
+# # create the imported target for FFTW MPI if found
+# if (FFTW_MPI_FOUND AND NOT TARGET FFTW_MPI::FFTW_MPI)
+#     set(FFTW_MPI_LIBRARIES    "${FFTW_MPI_LIBRARY}")
+#     set(FFTW_MPI_INCLUDE_DIRS "${FFTW_MPI_INCLUDE_DIR}")
 
-    add_library(FFTW_MPI::FFTW_MPI UNKNOWN IMPORTED)
+#     add_library(FFTW_MPI::FFTW_MPI UNKNOWN IMPORTED)
 
-    set_target_properties(FFTW_MPI::FFTW_MPI PROPERTIES
-        IMPORTED_LOCATION             "${FFTW_MPI_LIBRARIES}"
-        INTERFACE_INCLUDE_DIRECTORIES "${FFTW_MPI_INCLUDE_DIRS}"
-    )
-endif()
+#     set_target_properties(FFTW_MPI::FFTW_MPI PROPERTIES
+#         IMPORTED_LOCATION             "${FFTW_MPI_LIBRARIES}"
+#         INTERFACE_INCLUDE_DIRECTORIES "${FFTW_MPI_INCLUDE_DIRS}"
+#     )
+# endif()
