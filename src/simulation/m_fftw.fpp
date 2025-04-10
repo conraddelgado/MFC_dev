@@ -32,9 +32,9 @@ module m_fftw
  s_finalize_fftw_module, & 
  s_initialize_fftw_explicit_filter_module, &
  s_apply_fftw_filter_cons, & 
- s_initialize_gaussian_filter, & 
+ s_initialize_filtering_kernel, s_initialize_filtered_fluid_indicator_function, & 
  s_finalize_fftw_explicit_filter_module, & 
- s_apply_fftw_filter_tensor
+ s_apply_fftw_filter_tensor, s_apply_fftw_filter_scalarfield
 
 #if !defined(MFC_OpenACC)
     include 'fftw3.f03'
@@ -73,6 +73,9 @@ module m_fftw
 #endif
 
     ! new for explicit filtering of data
+    type(scalar_field), public :: fluid_indicator_function_I
+    !$acc declare create(fluid_indicator_function_I)
+
 #if defined(MFC_OpenACC)
     real(dp), allocatable, target :: real_data_gpu(:, :, :)
     complex(dp), allocatable, target :: complex_data_gpu(:, :, :)
@@ -83,7 +86,7 @@ module m_fftw
     integer :: forward_plan_gpu
     integer :: backward_plan_gpu
 
-    integer :: ierr
+    integer :: forward_plan_kernelG_gpu
 
     !$acc declare create(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
 #endif
@@ -166,22 +169,27 @@ contains
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
     subroutine s_initialize_fftw_explicit_filter_module
 
+        print *, 'FFTW SETUP...'
+
+        @:ALLOCATE(fluid_indicator_function_I%sf(0:m, 0:n, 0:p))
+        @:ACC_SETUP_SFs(fluid_indicator_function_I)
+
 #if defined(MFC_OpenACC)
         ! gpu data setup
         @:ALLOCATE(real_data_gpu(m+1, n+1, p+1))
-        @:ALLOCATE(complex_data_gpu(m+1, n+1, (p+1)/2+1))
+        @:ALLOCATE(complex_data_gpu((m+1)/2+1, n+1, p+1))
 
         @:ALLOCATE(real_kernelG_gpu(m+1, n+1, p+1))
-        @:ALLOCATE(complex_kernelG_gpu(m+1, n+1, (p+1)/2+1))
+        @:ALLOCATE(complex_kernelG_gpu((m+1)/2+1, n+1, p+1))
 
         ! gpu plan creation
-        ierr = cufftPlan3d(forward_plan_gpu, m, n, p, CUFFT_D2Z)
-        ierr = cufftPlan3d(backward_plan_gpu, m, n, p, CUFFT_Z2D)
+        ierr = cufftPlan3d(forward_plan_gpu, m+1, n+1, p+1, CUFFT_D2Z)
+        ierr = cufftPlan3d(backward_plan_gpu, m+1, n+1, p+1, CUFFT_Z2D)
+
+        ierr = cufftPlan3d(forward_plan_kernelG_gpu, m+1, n+1, p+1, CUFFT_D2Z)
 
 #else
         ! CPU
-        print *, 'FFTW SETUP...'
-
         ! data setup 
         p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
         p_complex = fftw_alloc_complex(int(((m+1)/2+1)*(n+1)*(p+1), C_SIZE_T))
@@ -204,14 +212,16 @@ contains
 
     end subroutine s_initialize_fftw_explicit_filter_module
 
-    subroutine s_initialize_gaussian_filter
+    !< initialize the gaussian filtering kernel in real space and then compute its DFT
+    subroutine s_initialize_filtering_kernel
         real(dp) :: sigma_stddev
         real(dp) :: Lx, Ly, Lz
         real(dp) :: x_r, y_r, z_r  
-        real(dp) :: r
+        real(dp) :: r2
         real(dp) :: G_norm_int, G_norm_int_glb
         integer :: i, j, k
 
+        ! gaussian filter
         sigma_stddev = 3.0_dp * 0.05_dp
 
         Lx = x_domain_end_glb - x_domain_beg_glb
@@ -221,21 +231,21 @@ contains
         G_norm_int = 0._dp
 
 #if defined(MFC_OpenACC)    
-        !$acc parallel loop collapse(3) gang vector default(present) copyin(sigma_stddev, Lx, Ly, Lz) reduction(+:G_norm_int)
+        !$acc parallel loop collapse(3) gang vector default(present) reduction(+:G_norm_int) copyin(Lx, Ly, Lz, sigma_stddev) private(x_r, y_r, z_r, r2)
         do i = 0, m 
             do j = 0, n 
-                do k = 0, p
+                do k = 0, p 
                     x_r = min(abs(x_cc(i) - x_domain_beg_glb), Lx - abs(x_cc(i) - x_domain_beg_glb))
                     y_r = min(abs(y_cc(j) - y_domain_beg_glb), Ly - abs(y_cc(j) - y_domain_beg_glb))
                     z_r = min(abs(z_cc(k) - z_domain_beg_glb), Lz - abs(z_cc(k) - z_domain_beg_glb))
 
-                    r = x_r**2 + y_r**2 + z_r**2
+                    r2 = x_r**2 + y_r**2 + z_r**2
 
-                    real_kernelG_gpu(i+1, j+1, k+1) = exp(-r/(2.0_dp*sigma_stddev**2))
+                    real_kernelG_gpu(i+1, j+1, k+1) = exp(-r2 / (2.0_dp*sigma_stddev**2))
 
                     G_norm_int = G_norm_int + real_kernelG_gpu(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
                 end do 
-            end do 
+            end do
         end do
 
         call s_mpi_allreduce_sum(G_norm_int, G_norm_int_glb) 
@@ -251,13 +261,13 @@ contains
         end do
 
         ! perform fourier transform on gaussian kernel
-        ierr = cufftExecD2Z(forward_plan_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+        ierr = cufftExecD2Z(forward_plan_kernelG_gpu, real_kernelG_gpu, complex_kernelG_gpu)
 
         ! normalize transformed kernel (divide by Nx*Ny*Nz)
         !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, m+1
+        do i = 1, (m+1)/2+1
             do j = 1, n+1
-                do k = 1, (p+1)/2+1
+                do k = 1, p+1
                     complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
                 end do 
             end do 
@@ -272,9 +282,9 @@ contains
                     y_r = min(abs(y_cc(j) - y_domain_beg_glb), Ly - abs(y_cc(j) - y_domain_beg_glb))
                     z_r = min(abs(z_cc(k) - z_domain_beg_glb), Lz - abs(z_cc(k) - z_domain_beg_glb))
 
-                    r = x_r**2 + y_r**2 + z_r**2
+                    r2 = x_r**2 + y_r**2 + z_r**2
 
-                    array_kernelG_in(i+1, j+1, k+1) = exp(-r/(2._dp*sigma_stddev**2))
+                    array_kernelG_in(i+1, j+1, k+1) = exp(-r2 / (2.0_dp*sigma_stddev**2))
 
                     G_norm_int = G_norm_int + array_kernelG_in(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
                 end do 
@@ -290,25 +300,35 @@ contains
         array_kernelG_out = array_kernelG_out / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp)) ! normalize DFT
 #endif
 
-    end subroutine s_initialize_gaussian_filter
+    end subroutine s_initialize_filtering_kernel
 
-    subroutine s_apply_fftw_filter_cons(q_cons_vf, q_cons_filtered)
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
+    !< initialize the fluid indicator function and compute its filtered counterpart
+    subroutine s_initialize_filtered_fluid_indicator_function(filtered_fluid_indicator_function)
+        type(scalar_field) :: filtered_fluid_indicator_function
 
-        integer :: i, j, k, l, q
+        integer :: i, j, k
 
+        ! define fluid indicator function
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 0, m
+            do j = 0, n 
+                do k = 0, p
+                    if (ib_markers%sf(i, j, k) == 0) then 
+                        fluid_indicator_function_I%sf(i, j, k) = 1.0_dp
+                    else 
+                        fluid_indicator_function_I%sf(i, j, k) = 0.0_dp
+                    end if
+                end do
+            end do
+        end do
+
+        ! filter fluid indicator function -> stored in q_cons_vf(advxb)
 #if defined(MFC_OpenACC)
-        ! fluid indicator function filtering
         !$acc parallel loop collapse(3) gang vector default(present)
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p
-                    if (ib_markers%sf(i, j, k) == 0) then
-                        real_data_gpu(i+1, j+1, k+1) = 1._dp
-                    else 
-                        real_data_gpu(i+1, j+1, k+1) = 0._dp
-                    end if 
+                    real_data_gpu(i+1, j+1, k+1) = fluid_indicator_function_I%sf(i, j, k)
                 end do 
             end do 
         end do 
@@ -316,9 +336,9 @@ contains
         ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
 
         !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, m+1
+        do i = 1, (m+1)/2+1
             do j = 1, n+1 
-                do k = 1, (p+1)/2+1
+                do k = 1, p+1
                     complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
                 end do 
             end do 
@@ -330,64 +350,14 @@ contains
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
-                    q_cons_filtered(advxb)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+                    filtered_fluid_indicator_function%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
                 end do
             end do
         end do
-        ! end fluid indicator function filtering
 
-        ! cons vars filtering
-        do l = 1, sys_size-1
-            !$acc parallel loop collapse(3) gang vector default(present) copyin(l)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p
-                        if (ib_markers%sf(i, j, k) == 0) then 
-                            real_data_gpu(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k)
-                        else 
-                            real_data_gpu(i+1, j+1, k+1) = 0._dp
-                        end if 
-                    end do 
-                end do 
-            end do
-
-            ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, m+1
-                do j = 1, n+1
-                    do k = 1, (p+1)/2+1
-                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                    end do  
-                end do 
-            end do
-
-            ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-
-            !$acc parallel loop collapse(3) gang vector default(present) copyin(l)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        q_cons_filtered(l)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(i, j, k))
-                    end do
-                end do
-            end do
-        end do ! end cons vars filtering
-
-#else 
+#else
         ! CPU
-        ! volume filter fluid volume fraction
-        do i = 0, m
-            do j = 0, n 
-                do k = 0, p
-                    if (ib_markers%sf(i, j, k) == 0) then
-                        array_in(i+1, j+1, k+1) = 1._dp
-                    else 
-                        array_in(i+1, j+1, k+1) = 0._dp
-                    end if
-                end do 
-            end do
-        end do
+        array_in(1:m+1, 1:n+1, 1:p+1) = fluid_indicator_function%sf(0:m, 0:n, 0:p)
 
         call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
 
@@ -395,35 +365,108 @@ contains
 
         call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-        q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
-
-        ! conservative variables volume filtering
-        do l = 1, sys_size-1
-            do i = 0, m
-                do j = 0, n 
-                    do k = 0, p
-                        if (ib_markers%sf(i, j, k) == 0) then
-                            array_in(i+1, j+1, k+1) = q_cons_vf(l)%sf(i, j, k) 
-                        else 
-                            array_in(i+1, j+1, k+1) = 0._dp
-                        end if
-                    end do 
-                end do
-            end do
-
-            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-            q_cons_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) ! unnormalized DFT
-                        
-        end do 
+        filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
 #endif
+
+    end subroutine s_initialize_filtered_fluid_indicator_function
+
+    !< apply the gaussian filter to the conservative variables and compute their filtered components
+    subroutine s_apply_fftw_filter_cons(q_cons_vf, q_cons_filtered)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
+
+        integer :: i, j, k, l, q
+
+        do l = 1, sys_size-1
+            call s_apply_fftw_filter_scalarfield(q_cons_filtered(advxb), .true., q_cons_vf(l), q_cons_filtered(l))
+        end do 
 
     end subroutine s_apply_fftw_filter_cons
 
+    !< applies the gaussian filter to an arbitrary scalar field
+    subroutine s_apply_fftw_filter_scalarfield(filtered_fluid_indicator_function, fluid_quantity, q_temp_in, q_temp_out)
+        type(scalar_field), intent(inout) :: q_temp_in
+        type(scalar_field), intent(inout), optional :: q_temp_out
+        type(scalar_field), intent(in) :: filtered_fluid_indicator_function
+
+        logical :: fluid_quantity !< whether or not convolution integral is over V_f or V_p^(i) - integral over fluid volume or particle volume
+
+        integer :: i, j, k
+
+#if defined(MFC_OpenACC)
+        if (fluid_quantity) then 
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        real_data_gpu(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * fluid_indicator_function_I%sf(i, j, k)
+                    end do
+                end do
+            end do
+        else 
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        real_data_gpu(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * (1.0_dp - fluid_indicator_function_I%sf(i, j, k))
+                    end do
+                end do
+            end do
+        end if
+            
+        ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
+
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, (m+1)/2+1
+            do j = 1, n+1
+                do k = 1, p+1
+                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+                end do
+            end do
+        end do
+
+        ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
+        
+        if (present(q_temp_out)) then
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        q_temp_out%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
+                    end do
+                end do
+            end do
+        else 
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        q_temp_in%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
+                    end do
+                end do
+            end do
+        end if 
+
+#else 
+        ! CPU
+        array_in(1:m+1, 1:n+1, 1:p+1) = q_temp_in%sf(0:m, 0:n, 0:p) * fluid_indicator_function_I%sf(0:m, 0:n, 0:p)
+
+        call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+
+        array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+
+        call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+
+        if (present(q_temp_out)) then 
+            q_temp_out%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+        else 
+            q_temp_in%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+        end if
+#endif
+
+    end subroutine s_apply_fftw_filter_scalarfield
+
+    !< apply the gaussian filter to the requisite tensors to compute unclosed terms of interest
     subroutine s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered)
         type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
@@ -433,205 +476,24 @@ contains
 
         integer :: i, j, k, l, q
 
-#if defined(MFC_OpenACC)
         ! pseudo turbulent reynolds stress
         do l = 1, num_dims 
             do q = 1, num_dims
-                !$acc parallel loop collapse(3) gang vector default(present) copyin(l, q) 
-                do i = 0, m 
-                    do j = 0, n 
-                        do k = 0, p
-                            if (ib_markers%sf(i, j, k) == 0) then
-                                real_data_gpu(i+1, j+1, k+1) = pt_Re_stress(l)%vf(q)%sf(i, j, k)
-                            else
-                                real_data_gpu(i+1, j+1, k+1) = 0._dp
-                            end if
-                        end do 
-                    end do 
-                end do
-                
-                ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-                !$acc parallel loop collapse(3) gang vector default(present)
-                do i = 1, m+1
-                    do j = 1, n+1
-                        do k = 1, (p+1)/2+1
-                            complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                        end do  
-                    end do 
-                end do
-                
-                ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-
-                !$acc parallel loop collapse(3) gang vector default(present) copyin(l, q)
-                do i = 0, m 
-                    do j = 0, n 
-                        do k = 0, p 
-                            pt_Re_stress(l)%vf(q)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(i, j, k))
-                        end do
-                    end do
-                end do
-            
+                call s_apply_fftw_filter_scalarfield(q_cons_filtered(advxb), .true., pt_Re_stress(l)%vf(q))
             end do
-        end do ! end pseudo turbulent reynolds stress
+        end do 
 
         ! effective viscosity
         do l = 1, num_dims 
             do q = 1, num_dims
-                !$acc parallel loop collapse(3) gang vector default(present) copyin(l, q) 
-                do i = 0, m 
-                    do j = 0, n 
-                        do k = 0, p
-                            if (ib_markers%sf(i, j, k) == 0) then
-                                real_data_gpu(i+1, j+1, k+1) = R_mu(l)%vf(q)%sf(i, j, k)
-                            else
-                                real_data_gpu(i+1, j+1, k+1) = 0._dp
-                            end if
-                        end do 
-                    end do 
-                end do
-                
-                ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-                !$acc parallel loop collapse(3) gang vector default(present)
-                do i = 1, m+1
-                    do j = 1, n+1
-                        do k = 1, (p+1)/2+1
-                            complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                        end do  
-                    end do 
-                end do
-                
-                ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-
-                !$acc parallel loop collapse(3) gang vector default(present) copyin(l, q)
-                do i = 0, m 
-                    do j = 0, n 
-                        do k = 0, p 
-                            R_mu(l)%vf(q)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(i, j, k))
-                        end do
-                    end do
-                end do
-            
+                call s_apply_fftw_filter_scalarfield(q_cons_filtered(advxb), .true., R_mu(l)%vf(q))
             end do
-        end do ! end effective viscosity
+        end do 
 
         ! interphase momentum exchange
         do l = 1, num_dims
-            !$acc parallel loop collapse(3) gang vector default(present) copyin(l)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p
-                        if (ib_markers%sf(i, j, k) == 0) then 
-                            real_data_gpu(i+1, j+1, k+1) = 0._dp
-                        else 
-                            real_data_gpu(i+1, j+1, k+1) = rhs_rhouu(momxb-1+l)%sf(i, j, k)
-                        end if
-                    end do 
-                end do
-            end do
-
-            ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, m+1
-                do j = 1, n+1
-                    do k = 1, (p+1)/2+1
-                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                    end do  
-                end do 
-            end do
-            
-            ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-
-            !$acc parallel loop collapse(3) gang vector default(present) copyin(l)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        pImT_filtered(l)%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(i, j, k))
-                    end do
-                end do
-            end do
-
-        end do ! end interphase momentum exchange
-
-#else   
-        ! CPU
-        ! volume filter -> used in pseudo turbulent Reynolds stress
-        do l = 1, num_dims
-            do q = 1, num_dims
-                do i = 0, m
-                    do j = 0, n 
-                        do k = 0, p
-                            if (ib_markers%sf(i, j, k) == 0) then
-                                array_in(i+1, j+1, k+1) = pt_Re_stress(l)%vf(q)%sf(i, j, k)
-                            else
-                                array_in(i+1, j+1, k+1) = 0._dp
-                            end if
-                        end do 
-                    end do
-                end do
-
-                call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-                array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-                call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-                pt_Re_stress(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) 
-
-            end do
+            call s_apply_fftw_filter_scalarfield(q_cons_filtered(advxb), .false., rhs_rhouu(momxb-1+l), pImT_filtered(l))
         end do 
-
-        ! volume filter -> used in effective viscosity
-        do l = 1, num_dims
-            do q = 1, num_dims
-                do i = 0, m
-                    do j = 0, n 
-                        do k = 0, p
-                            if (ib_markers%sf(i, j, k) == 0) then
-                                array_in(i+1, j+1, k+1) = R_mu(l)%vf(q)%sf(i, j, k)
-                            else
-                                array_in(i+1, j+1, k+1) = 0._dp
-                            end if
-                        end do 
-                    end do
-                end do
-
-                call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-                array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-                call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-                R_mu(l)%vf(q)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p))
-
-            end do
-        end do 
-
-        ! interphase momentum exchange term
-        do l = 1, num_dims  
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        if (ib_markers%sf(i, j, k) == 0) then
-                            array_in(i+1, j+1, k+1) = 0._dp 
-                        else 
-                            array_in(i+1, j+1, k+1) = rhs_rhouu(momxb-1+l)%sf(i, j, k)
-                        end if
-                    end do 
-                end do 
-            end do
-            call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-            array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-            call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-            pImT_filtered(l)%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * q_cons_filtered(advxb)%sf(0:m, 0:n, 0:p)) 
-
-        end do
-#endif
 
     end subroutine s_apply_fftw_filter_tensor
 
@@ -835,11 +697,15 @@ contains
     end subroutine s_finalize_fftw_module
 
     subroutine s_finalize_fftw_explicit_filter_module
+        @:DEALLOCATE(fluid_indicator_function_I%sf)
+
 #if defined(MFC_OpenACC)
         @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
 
         ierr = cufftDestroy(forward_plan_gpu)
         ierr = cufftDestroy(backward_plan_gpu)
+
+        ierr = cufftDestroy(forward_plan_kernelG_gpu)
 #else
         call fftw_free(p_real)
         call fftw_free(p_complex)

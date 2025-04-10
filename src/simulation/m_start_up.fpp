@@ -1378,8 +1378,10 @@ contains
 
         call cpu_time(start)
         call nvtxStartRange("SAVE-DATA")
+        !$acc update host(mag_div_Ru%sf, mag_div_R_mu%sf, mag_F_IMET%sf)
         do i = 1, sys_size
             !$acc update host(q_cons_ts(1)%vf(i)%sf)
+            !$acc update host(q_cons_filtered(i)%sf)
             do l = 0, p
                 do k = 0, n
                     do j = 0, m
@@ -1528,7 +1530,6 @@ contains
         if (hyperelasticity) call s_initialize_hyperelastic_module()
         
         if (fourier_transform_filtering) call s_initialize_fftw_explicit_filter_module()
-        if (fourier_transform_filtering) call s_initialize_gaussian_filter()
 
     end subroutine s_initialize_modules
 

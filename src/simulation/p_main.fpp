@@ -54,6 +54,10 @@ program p_main
     call s_initialize_gpu_vars()
     call nvtxEndRange
 
+    ! initialize filtering kernel
+    if (fourier_transform_filtering) call s_initialize_filtering_kernel()
+    if (fourier_transform_filtering) call s_initialize_filtered_fluid_indicator_function(q_cons_filtered(advxb))
+
     ! Setting the time-step iterator to the first time-step
     if (cfl_dt) then
         t_step = 0

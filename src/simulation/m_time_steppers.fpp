@@ -91,11 +91,9 @@ module m_time_steppers
 
     ! filtering variables
     type(scalar_field), allocatable, dimension(:) :: q_cons_filtered
-    type(scalar_field), allocatable, dimension(:) :: q_vel_filtered
     type(vector_field), allocatable, dimension(:) :: pt_Re_stress
     type(vector_field), allocatable, dimension(:) :: R_mu
     type(scalar_field), allocatable, dimension(:) :: pImT_filtered
-    type(scalar_field), allocatable, dimension(:) :: F_IMET
 
     type(scalar_field) :: mag_div_Ru
     type(scalar_field) :: mag_div_R_mu
@@ -105,7 +103,7 @@ module m_time_steppers
     !$acc declare create(rhs_rhouu, du_dxyz, F_D_vi, F_D_si)
     !$acc declare create(x_surf, y_surf, z_surf, pressure_surf, dudx_surf, dudy_surf, dudz_surf, stress_tensor)
     !$acc declare create(q_bar, q_periodic_force, q_spatial_avg, q_spatial_avg_glb, N_x_total_glb, volfrac_phi)
-    !$acc declare create(q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, pImT_filtered, F_IMET)
+    !$acc declare create(q_cons_filtered, pt_Re_stress, R_mu, pImT_filtered)
     !$acc declare create(mag_div_Ru, mag_div_R_mu, mag_F_IMET)
 
 contains
@@ -397,14 +395,6 @@ contains
                 @:ACC_SETUP_SFs(q_cons_filtered(i))
             end do
 
-            @:ALLOCATE(q_vel_filtered(momxb:momxe))
-            do i = momxb, momxe
-                @:ALLOCATE(q_vel_filtered(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(q_vel_filtered(i))
-            end do 
-
             @:ALLOCATE(pt_Re_stress(1:num_dims))
             do i = 1, num_dims
                 @:ALLOCATE(pt_Re_stress(i)%vf(1:num_dims))
@@ -437,14 +427,6 @@ contains
                     idwbuff(2)%beg:idwbuff(2)%end, &
                     idwbuff(3)%beg:idwbuff(3)%end))
                 @:ACC_SETUP_SFs(pImT_filtered(i))
-            end do
-
-            @:ALLOCATE(F_IMET(1:num_dims))
-            do i = 1, num_dims
-                @:ALLOCATE(F_IMET(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(F_IMET(i))
             end do
 
             ! magnitude of momentum unclosed terms
@@ -810,25 +792,22 @@ contains
             call s_compute_periodic_forcing(q_cons_ts(1)%vf, q_bar, q_periodic_force)
         end if
 
-        
+        call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
+        rhs_rhouu, du_dxyz)
+
         if (fourier_transform_filtering) then
             call s_apply_fftw_filter_cons(q_cons_ts(1)%vf, q_cons_filtered) ! filter conservative variables
 
-            write(103) q_cons_filtered(sys_size)%sf(0:m, 0:n, 0:p) !q_cons_filtered(sys_size+1)%sf(:, :, :)
-
-            call s_setup_terms_filtering(q_cons_ts(1)%vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, mag_div_R_mu) ! setup terms for filtering
+            call s_setup_terms_filtering(q_cons_ts(1)%vf, pt_Re_stress, R_mu) ! setup terms for filtering
                     
-            call s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered) ! filter terms for tensors
+            call s_apply_fftw_filter_tensor(pt_Re_stress, R_mu, q_cons_filtered, rhs_rhouu, pImT_filtered) ! filter terms for tensors (this should be after rhs call since it uses rhs_rhouu)
 
             call s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress, mag_div_Ru) ! calculate pseudo turbulent reynolds stress
 
-            call s_compute_R_mu(R_mu, mag_div_R_mu) ! calculate R_mu
+            call s_compute_R_mu(q_cons_filtered, R_mu, mag_div_R_mu) ! calculate R_mu
 
-            call s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered, mag_F_IMET) ! calculate interphase momentum exchange term
+            call s_compute_interphase_momentum_exchange_term(pImT_filtered, mag_F_IMET) ! calculate interphase momentum exchange term
         end if
-
-        call s_compute_rhs(q_cons_ts(1)%vf, q_T_sf, q_prim_vf, rhs_vf, pb_ts(1)%sf, rhs_pb, mv_ts(1)%sf, rhs_mv, t_step, time_avg, &
-        rhs_rhouu, du_dxyz)
         
         if (compute_CD_vi) then
             call s_compute_dragforce_vi(rhs_rhouu, q_prim_vf)
@@ -1346,17 +1325,15 @@ contains
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
-                    if (ib_markers%sf(i, j, k) == 0) then
-                        q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k)
-                        q_spatial_avg(5) = q_spatial_avg(5) + 0.4_wp/287._wp * (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
-                                           - 0.5_wp * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
-                                           + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
-                                           + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2)) 
-                                           
-                        q_spatial_avg(1) = q_spatial_avg(1) + q_cons_vf(2)%sf(i, j, k)
-                        q_spatial_avg(2) = q_spatial_avg(2) + q_cons_vf(3)%sf(i, j, k)
-                        q_spatial_avg(3) = q_spatial_avg(3) + q_cons_vf(4)%sf(i, j, k)
-                    end if
+                    q_spatial_avg(4) = q_spatial_avg(4) + q_cons_vf(1)%sf(i, j, k) * fluid_indicator_function_I%sf(i, j, k)
+                    q_spatial_avg(5) = q_spatial_avg(5) + (0.4_wp/287._wp * (q_cons_vf(5)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k) & 
+                                        - 0.5_wp * ((q_cons_vf(2)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
+                                        + (q_cons_vf(3)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2 & 
+                                        + (q_cons_vf(4)%sf(i, j, k)/q_cons_vf(1)%sf(i, j, k))**2))) * fluid_indicator_function_I%sf(i, j, k)
+                                        
+                    q_spatial_avg(1) = q_spatial_avg(1) + (q_cons_vf(2)%sf(i, j, k)) * fluid_indicator_function_I%sf(i, j, k)
+                    q_spatial_avg(2) = q_spatial_avg(2) + (q_cons_vf(3)%sf(i, j, k)) * fluid_indicator_function_I%sf(i, j, k)
+                    q_spatial_avg(3) = q_spatial_avg(3) + (q_cons_vf(4)%sf(i, j, k)) * fluid_indicator_function_I%sf(i, j, k)
                 end do
             end do
         end do
@@ -1455,14 +1432,10 @@ contains
 
     end subroutine s_add_periodic_forcing
 
-    subroutine s_setup_terms_filtering(q_cons_vf, q_cons_filtered, q_vel_filtered, pt_Re_stress, R_mu, mag_div_R_mu)
-        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
-        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
-        type(scalar_field), dimension(momxb:momxe), intent(in) :: q_vel_filtered
+    subroutine s_setup_terms_filtering(q_cons_vf, pt_Re_stress, R_mu)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
-        type(scalar_field), intent(inout) :: mag_div_R_mu
-        real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_R_mu
 
         integer :: i, j, k, l, q
 
@@ -1484,7 +1457,9 @@ contains
 
         ! set density and momentum buffers
 #if defined(MFC_OpenACC)
-
+        do i = 1, momxe 
+            call s_populate_scalarfield_buffers(q_cons_vf(i))
+        end do
 #else
         do i = 1, momxe
             q_cons_vf(i)%sf(-buff_size:-1, :, :) = q_cons_vf(i)%sf(m-buff_size+1:m, :, :)
@@ -1540,7 +1515,7 @@ contains
 
     subroutine s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, pt_Re_stress, mag_div_Ru)
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
-        type(vector_field), dimension(1:num_dims), intent(in) :: pt_Re_stress
+        type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(scalar_field), intent(inout) :: mag_div_Ru
         real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_Ru
         integer :: i, j, k, l, q    
@@ -1578,7 +1553,11 @@ contains
 
         ! set boundary buffer zone values
 #if defined(MFC_OpenACC)
-
+        do l = 1, num_dims 
+            do q = 1, num_dims
+                call s_populate_scalarfield_buffers(pt_Re_stress(l)%vf(q))
+            end do 
+        end do
 #else
         do l = 1, num_dims
             do q = 1, num_dims
@@ -1595,7 +1574,7 @@ contains
 #endif
 
         ! div(Ru), using CD2 FD scheme 
-        !$acc parallel loop collapse(3) gang vector default(present)
+        !$acc parallel loop collapse(3) gang vector default(present) copy(div_Ru)
         do i = 0, m
             do j = 0, n 
                 do k = 0, p
@@ -1609,7 +1588,7 @@ contains
             end do
         end do
 
-        !$acc parallel loop collapse(3) gang vector default(present)
+        !$acc parallel loop collapse(3) gang vector default(present) copyin(div_Ru)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
@@ -1624,8 +1603,9 @@ contains
 
     end subroutine s_compute_pseudo_turbulent_reynolds_stress
 
-    subroutine s_compute_R_mu(R_mu, mag_div_R_mu)
-        type(vector_field), dimension(1:num_dims), intent(in) :: R_mu
+    subroutine s_compute_R_mu(q_cons_filtered, R_mu, mag_div_R_mu)
+        type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
+        type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
         type(scalar_field), intent(inout) :: mag_div_R_mu
         real(wp), dimension(1:num_dims, 0:m, 0:n, 0:p) :: div_R_mu
 
@@ -1633,8 +1613,9 @@ contains
 
         ! set buffers for filtered momentum quantities and density
 #if defined(MFC_OpenACC)
-
-
+        do i = 1, momxe 
+            call s_populate_scalarfield_buffers(q_cons_filtered(i))
+        end do
 #else
         do i = 1, momxe
             q_cons_filtered(i)%sf(-buff_size:-1, :, :) = q_cons_filtered(i)%sf(m-buff_size+1:m, :, :)
@@ -1704,8 +1685,11 @@ contains
 
         ! set boundary buffer zone values
 #if defined(MFC_OpenACC)
-
-
+        do l = 1, num_dims
+            do q = 1, num_dims
+                call s_populate_scalarfield_buffers(R_mu(l)%vf(q))
+            end do
+        end do
 #else
         do l = 1, num_dims
             do q = 1, num_dims
@@ -1722,7 +1706,7 @@ contains
 #endif
 
         ! div(R_mu), using CD2 FD scheme 
-        !$acc parallel loop collapse(3) gang vector default(present)
+        !$acc parallel loop collapse(3) gang vector default(present) copy(div_R_mu)
         do i = 0, m
             do j = 0, n 
                 do k = 0, p
@@ -1736,7 +1720,7 @@ contains
             end do
         end do
 
-        !$acc parallel loop collapse(3) gang vector default(present)
+        !$acc parallel loop collapse(3) gang vector default(present) copyin(div_R_mu)
         do i = 0, m
             do j = 0, n
                 do k = 0, p 
@@ -1751,8 +1735,7 @@ contains
 
     end subroutine s_compute_R_mu
 
-    subroutine s_compute_interphase_momentum_exchange_term(F_IMET, pImT_filtered, mag_F_IMET)
-        type(scalar_field), dimension(1:num_dims), intent(in) :: F_IMET
+    subroutine s_compute_interphase_momentum_exchange_term(pImT_filtered, mag_F_IMET)
         type(scalar_field), dimension(1:num_dims), intent(in) :: pImT_filtered
         type(scalar_field), intent(inout) :: mag_F_IMET
 
@@ -2225,11 +2208,6 @@ contains
             end do
             @:DEALLOCATE(q_cons_filtered)
 
-            do i = momxb, momxe
-                @:DEALLOCATE(q_vel_filtered(i)%sf)
-            end do
-            @:DEALLOCATE(q_vel_filtered)
-
             do i = 1, num_dims
                 do j = 1, num_dims
                     @:DEALLOCATE(pt_Re_stress(i)%vf(j)%sf)
@@ -2250,11 +2228,6 @@ contains
                 @:DEALLOCATE(pImT_filtered(i)%sf)
             end do
             @:DEALLOCATE(pImT_filtered)
-
-            do i = 1, num_dims
-                @:DEALLOCATE(F_IMET(i)%sf)
-            end do
-            @:DEALLOCATE(F_IMET)
 
             @:DEALLOCATE(mag_div_Ru%sf)
             @:DEALLOCATE(mag_div_R_mu%sf)
