@@ -1015,7 +1015,9 @@ contains
                                                         (flux_n(1)%vf(l)%sf(i - 1, j, k) &
                                                             - q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf%vf(l)%sf(i - 1, j, k)/q_cons_vf%vf(1)%sf(i - 1, j, k) &
                                                             - (flux_n(1)%vf(l)%sf(i, j, k) & 
-                                                            - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k))) 
+                                                            - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))
+                                                            !0.5_wp/dx(i) * (q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf)
+ 
                             end do 
                         end do
                     end do

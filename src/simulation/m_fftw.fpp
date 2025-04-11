@@ -357,7 +357,7 @@ contains
 
 #else
         ! CPU
-        array_in(1:m+1, 1:n+1, 1:p+1) = fluid_indicator_function%sf(0:m, 0:n, 0:p)
+        array_in(1:m+1, 1:n+1, 1:p+1) = fluid_indicator_function_I%sf(0:m, 0:n, 0:p)
 
         call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
 
@@ -471,7 +471,7 @@ contains
         type(vector_field), dimension(1:num_dims), intent(inout) :: pt_Re_stress
         type(vector_field), dimension(1:num_dims), intent(inout) :: R_mu
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
-        type(scalar_field), dimension(momxb:momxe), intent(in) :: rhs_rhouu
+        type(scalar_field), dimension(momxb:momxe), intent(inout) :: rhs_rhouu
         type(scalar_field), dimension(1:num_dims), intent(inout) :: pImT_filtered
 
         integer :: i, j, k, l, q
