@@ -235,6 +235,7 @@ module m_global_parameters
     logical :: chem_wrt_T
     logical :: q_filtered_wrt
     logical :: pencil_domain_decomposition
+    logical :: slab_domain_decomposition
     !> @}
 
     real(wp), dimension(num_fluids_max) :: schlieren_alpha    !<
@@ -402,6 +403,7 @@ contains
         ib = .false.
         q_filtered_wrt = .false.
         pencil_domain_decomposition = .false.
+        slab_domain_decomposition = .false.
 
         schlieren_alpha = dflt_real
 

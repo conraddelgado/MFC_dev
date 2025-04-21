@@ -17,6 +17,10 @@ module m_fftw
 
     use m_ibm
 
+#ifdef MFC_MPI
+    use mpi                    !< Message passing interface (MPI) module
+#endif
+
 #if defined(MFC_OpenACC) && defined(__PGI)
     use cufft
 #elif defined(MFC_OpenACC)
@@ -34,7 +38,9 @@ module m_fftw
  s_apply_fftw_filter_cons, & 
  s_initialize_filtering_kernel, s_initialize_filtered_fluid_indicator_function, & 
  s_finalize_fftw_explicit_filter_module, & 
- s_apply_fftw_filter_tensor, s_apply_fftw_filter_scalarfield
+ s_apply_fftw_filter_tensor, s_apply_fftw_filter_scalarfield, & 
+ s_transpose_z2y_mpi, s_transpose_y2x_mpi, s_transpose_x2y_mpi, s_transpose_y2z_mpi, & 
+ s_mpi_perform_transpose_forward, s_mpi_perform_transpose_backward
 
 #if !defined(MFC_OpenACC)
     include 'fftw3.f03'
@@ -65,12 +71,13 @@ module m_fftw
 #else
     type(c_ptr) :: fwd_plan_gpu, bwd_plan_gpu
 #endif
-    integer :: ierr
 
     integer, allocatable :: gpu_fft_size(:), iembed(:), oembed(:)
 
     integer :: istride, ostride, idist, odist, rank
 #endif
+
+    integer :: ierr
 
     ! new for explicit filtering of data
     type(scalar_field), public :: fluid_indicator_function_I
@@ -80,15 +87,24 @@ module m_fftw
     real(dp), allocatable, target :: real_data_gpu(:, :, :)
     complex(dp), allocatable, target :: complex_data_gpu(:, :, :)
 
+    complex(dp), allocatable, target :: complex_y_gpu(:, :, :)
+    complex(dp), allocatable, target :: complex_x_gpu(:, :, :)
+
     real(dp), allocatable, target :: real_kernelG_gpu(:, :, :)
     complex(dp), allocatable, target :: complex_kernelG_gpu(:, :, :)
+
+    complex(dp), allocatable, target :: complex_kernelG_gpu_mpi(:, :, :)
+    complex(dp), allocatable, target :: complex_data_gpu_mpi(:, :, :)
 
     integer :: forward_plan_gpu
     integer :: backward_plan_gpu
 
     integer :: forward_plan_kernelG_gpu
 
-    !$acc declare create(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+    integer :: plan_y_gpu 
+    integer :: plan_x_gpu
+
+    !$acc declare create(real_data_gpu, complex_data_gpu, complex_y_gpu, complex_x_gpu, real_kernelG_gpu, complex_kernelG_gpu, complex_kernelG_gpu_mpi, complex_data_gpu_mpi)
 #endif
     type(c_ptr) :: plan_forward
     type(c_ptr) :: plan_backward
@@ -168,6 +184,9 @@ contains
 
     ! create fftw plan to be used for explicit filtering of data -> volume filtering
     subroutine s_initialize_fftw_explicit_filter_module
+        integer :: fft_rank
+        integer :: nfft(1), inembed(1), onembed(1)
+        integer :: batch, istride, idist, ostride, odist
 
         print *, 'FFTW SETUP...'
 
@@ -177,16 +196,57 @@ contains
 #if defined(MFC_OpenACC)
         ! gpu data setup
         @:ALLOCATE(real_data_gpu(m+1, n+1, p+1))
-        @:ALLOCATE(complex_data_gpu((m+1)/2+1, n+1, p+1))
+        @:ALLOCATE(complex_data_gpu(m+1, n+1, (p+1)/2+1))
 
+        ! MPI transpose arrays
+        @:ALLOCATE(complex_y_gpu(m+1, (p+1)/2+1, n+1))
+        @:ALLOCATE(complex_x_gpu(n+1, (p+1)/2+1, m+1))
+
+        ! gpu kernel arrays
         @:ALLOCATE(real_kernelG_gpu(m+1, n+1, p+1))
-        @:ALLOCATE(complex_kernelG_gpu((m+1)/2+1, n+1, p+1))
+        @:ALLOCATE(complex_kernelG_gpu(m+1, n+1, (p+1)/2+1))
+
+        ! MPI transposed complex kernel array
+        @:ALLOCATE(complex_kernelG_gpu_mpi(n+1, (p+1)/2+1, m+1))
+
+        ! MPI transposed complex data array
+        @:ALLOCATE(complex_data_gpu_mpi(n+1, (p+1)/2+1, m+1))
 
         ! gpu plan creation
         ierr = cufftPlan3d(forward_plan_gpu, m+1, n+1, p+1, CUFFT_D2Z)
         ierr = cufftPlan3d(backward_plan_gpu, m+1, n+1, p+1, CUFFT_Z2D)
 
         ierr = cufftPlan3d(forward_plan_kernelG_gpu, m+1, n+1, p+1, CUFFT_D2Z)
+
+        fft_rank = 1
+
+        ! MPI transpose y plan
+        nfft(1) = n+1
+        inembed(1) = n+1
+        onembed(1) = n+1
+
+        istride = 1
+        idist = n+1
+        ostride = 1
+        odist = n+1
+
+        batch = (m+1) * ((p+1)/2+1)
+
+        ierr = cufftPlanMany(plan_y_gpu, fft_rank, nfft, inembed, istride, idist, onembed, ostride, odist, CUFFT_Z2Z, batch)
+
+        ! MPI transpose x plan
+        nfft(1) = m+1
+        inembed(1) = m+1
+        onembed(1) = m+1
+        
+        istride = 1
+        idist = m+1
+        ostride = 1
+        odist = m+1
+        
+        batch = (n+1) * ((p+1)/2+1)
+        
+        ierr = cufftPlanMany(plan_x_gpu, fft_rank, nfft, inembed, istride, idist, onembed, ostride, odist, CUFFT_Z2Z, batch)                     
 
 #else
         ! CPU
@@ -230,6 +290,8 @@ contains
         
         G_norm_int = 0._dp
 
+        print *, 'x, y, z local index sizes', m, n, p, num_procs
+
 #if defined(MFC_OpenACC)    
         !$acc parallel loop collapse(3) gang vector default(present) reduction(+:G_norm_int) copyin(Lx, Ly, Lz, sigma_stddev) private(x_r, y_r, z_r, r2)
         do i = 0, m 
@@ -263,15 +325,37 @@ contains
         ! perform fourier transform on gaussian kernel
         ierr = cufftExecD2Z(forward_plan_kernelG_gpu, real_kernelG_gpu, complex_kernelG_gpu)
 
-        ! normalize transformed kernel (divide by Nx*Ny*Nz)
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1
-                do k = 1, p+1
-                    complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+        ! transpose DFT data, only necessary with MPI domain decomposition and more than one rank
+        if (num_procs > 1) then
+            call s_transpose_z2y_mpi(complex_kernelG_gpu) ! -> gives complex_y_gpu
+
+            ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_FORWARD) 
+
+            call s_transpose_y2x_mpi ! gives complex_x_gpu
+
+            ierr = cufftExecZ2Z(plan_x_gpu, complex_x_gpu, complex_kernelG_gpu_mpi, CUFFT_FORWARD)
+
+            ! normalize filtering kernel after fourier transform
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 1, n+1
+                do j = 1, (p+1)/2+1
+                    do k = 1, m+1
+                        complex_kernelG_gpu_mpi(i, j, k) = complex_kernelG_gpu_mpi(i, j, k) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp))
+                    end do 
                 end do 
-            end do 
-        end do
+            end do
+        
+        else 
+            ! normalize transformed kernel (divide by Nx*Ny*Nz)
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 1, m+1
+                do j = 1, n+1
+                    do k = 1, (p+1)/2+1
+                        complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp))
+                    end do 
+                end do 
+            end do
+        end if
 
 #else
         ! CPU
@@ -297,7 +381,7 @@ contains
 
         call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
         
-        array_kernelG_out = array_kernelG_out / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp)) ! normalize DFT
+        array_kernelG_out = array_kernelG_out / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp)) ! normalize DFT
 #endif
 
     end subroutine s_initialize_filtering_kernel
@@ -335,14 +419,30 @@ contains
 
         ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
 
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1 
-                do k = 1, p+1
-                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+        if (num_procs > 1) then
+            call s_mpi_perform_transpose_forward(complex_data_gpu) !< gives complex_data_gpu_mpi
+
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 1, n+1
+                do j = 1, (p+1)/2+1
+                    do k = 1, m+1
+                        complex_data_gpu_mpi(i, j, k) = complex_data_gpu_mpi(i, j, k) * complex_kernelG_gpu_mpi(i, j, k)
+                    end do 
                 end do 
-            end do 
-        end do
+            end do
+
+            call s_mpi_perform_transpose_backward(complex_data_gpu)
+
+        else ! 1 rank
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 1, m+1
+                do j = 1, n+1 
+                    do k = 1, (p+1)/2+1
+                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+                    end do 
+                end do 
+            end do
+        end if
 
         ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
 
@@ -350,7 +450,7 @@ contains
         do i = 0, m 
             do j = 0, n 
                 do k = 0, p 
-                    filtered_fluid_indicator_function%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+                    filtered_fluid_indicator_function%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp))
                 end do
             end do
         end do
@@ -365,7 +465,7 @@ contains
 
         call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
-        filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
+        filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp))
 #endif
 
     end subroutine s_initialize_filtered_fluid_indicator_function
@@ -416,14 +516,29 @@ contains
             
         ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
 
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1
-                do k = 1, p+1
-                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+        if (num_procs > 1) then 
+            call s_mpi_perform_transpose_forward(complex_data_gpu)
+
+            do i = 1, n+1
+                do j = 1, (p+1)/2+1
+                    do k = 1, m+1
+                        complex_data_gpu_mpi(i, j, k) = complex_data_gpu_mpi(i, j, k) * complex_kernelG_gpu_mpi(i, j, k)
+                    end do 
+                end do 
+            end do
+
+            call s_mpi_perform_transpose_backward(complex_data_gpu)
+
+        else ! 1 rank
+            !$acc parallel loop collapse(3) gang vector default(present)
+            do i = 1, m+1
+                do j = 1, n+1
+                    do k = 1, (p+1)/2+1
+                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
+                    end do
                 end do
             end do
-        end do
+        end if
 
         ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
         
@@ -432,7 +547,7 @@ contains
             do i = 0, m 
                 do j = 0, n 
                     do k = 0, p 
-                        q_temp_out%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
+                        q_temp_out%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
                     end do
                 end do
             end do
@@ -441,7 +556,7 @@ contains
             do i = 0, m 
                 do j = 0, n 
                     do k = 0, p 
-                        q_temp_in%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
+                        q_temp_in%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
                     end do
                 end do
             end do
@@ -458,9 +573,9 @@ contains
         call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
 
         if (present(q_temp_out)) then 
-            q_temp_out%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+            q_temp_out%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
         else 
-            q_temp_in%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+            q_temp_in%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m_glb+1, dp)*real(n_glb+1, dp)*real(p_glb+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
         end if
 #endif
 
@@ -496,6 +611,220 @@ contains
         end do 
 
     end subroutine s_apply_fftw_filter_tensor
+
+    !< wrapper for performing MPI data transpose steps to compute 3D DFT, FORWARD (only for flow quantities)
+    subroutine s_mpi_perform_transpose_forward(complex_in_gpu_mpi)
+        complex(dp), intent(inout) :: complex_in_gpu_mpi(m+1, n+1, (p+1)/2+1)
+
+        call s_transpose_z2y_mpi(complex_in_gpu_mpi) ! -> gives complex_y_gpu
+
+        ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_FORWARD) 
+
+        call s_transpose_y2x_mpi ! gives complex_x_gpu
+
+        ierr = cufftExecZ2Z(plan_x_gpu, complex_x_gpu, complex_data_gpu_mpi, CUFFT_FORWARD) 
+
+    end subroutine s_mpi_perform_transpose_forward
+    
+    !< wrapper for performing MPI data transpose steps to compute 3D DFT, BACKWARD
+    subroutine s_mpi_perform_transpose_backward(complex_in_gpu_mpi)
+        complex(dp), intent(inout) :: complex_in_gpu_mpi(m+1, n+1, (p+1)/2+1)
+
+        ierr = cufftExecZ2Z(plan_x_gpu, complex_data_gpu_mpi, complex_x_gpu, CUFFT_INVERSE)
+
+        call s_transpose_x2y_mpi !< gives complex_y_gpu
+
+        ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_INVERSE) 
+
+        call s_transpose_y2z_mpi(complex_in_gpu_mpi) 
+
+    end subroutine s_mpi_perform_transpose_backward
+
+    subroutine s_transpose_z2y_mpi(complex_z_gpu)
+        complex(dp), intent(inout) :: complex_z_gpu(m+1, n+1, (p+1)/2+1)
+        complex(dp), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: sendcounts(num_procs), recvcounts(num_procs)
+        integer :: sdispls(num_procs), rdispls(num_procs)
+        integer :: total_size, offset
+        integer :: i, j, k, r, s
+
+        total_size = (m+1) * (n+1) * ((p+1)/2+1)
+
+        allocate(sendbuf(total_size))
+        allocate(recvbuf(total_size))
+
+        !$acc parallel loop collapse(3) gang vector default(present) copy(sendbuf)
+        do i = 1, m+1
+            do j = 1, n+1
+                do k = 1, (p+1)/2+1
+                    offset = (i-1)*(n+1)*((p+1)/2+1) + (j-1)*((p+1)/2+1) + k
+                    sendbuf(offset) = complex_z_gpu(i, j, k)
+                end do
+            end do
+        end do
+
+        do r = 1, num_procs
+            sendcounts(r) = total_size / num_procs
+            recvcounts(r) = total_size / num_procs
+            sdispls(r) = (r-1) * sendcounts(r) + 1 
+            rdispls(r) = (r-1) * recvcounts(r) + 1
+        end do
+
+        call MPI_Alltoallv(sendbuf, sendcounts, sdispls, MPI_DOUBLE_COMPLEX, &
+                           recvbuf, recvcounts, rdispls, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+
+        !$acc parallel loop collapse(3) gang vector default(present) copy(recvbuf)
+        do i = 1, m+1
+            do j = 1, (p+1)/2+1
+                do k = 1, n+1
+                    offset = (i-1)*((p+1)/2+1)*(n+1) + (j-1)*(n+1) + k
+                    complex_y_gpu(i, j, k) = recvbuf(offset)
+                end do
+            end do
+        end do
+
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_transpose_z2y_mpi
+
+    subroutine s_transpose_y2x_mpi
+        complex(dp), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: sendcounts(num_procs), recvcounts(num_procs)
+        integer :: sdispls(num_procs), rdispls(num_procs)
+        integer :: total_size, offset
+        integer :: i, j, k, s, r
+
+        total_size = (m+1) * (n+1) * ((p+1)/2+1)
+
+        allocate(sendbuf(total_size))
+        allocate(recvbuf(total_size))
+
+        !$acc parallel loop collapse(3) gang vector default(present) copy(sendbuf)
+        do i = 1, m+1
+            do j = 1, (p+1)/2+1
+                do k = 1, n+1
+                    offset = (i-1)*((p+1)/2+1)*(n+1) + (j-1)*(n+1) + k
+                    sendbuf(offset) = complex_y_gpu(i, j, k)
+                end do
+            end do
+        end do
+
+        do r = 1, num_procs
+            sendcounts(r) = total_size / num_procs
+            recvcounts(r) = total_size / num_procs
+            sdispls(r) = (r-1) * sendcounts(r) + 1
+            rdispls(r) = (r-1) * recvcounts(r) + 1
+        end do
+
+        call MPI_Alltoallv(sendbuf, sendcounts, sdispls, MPI_DOUBLE_COMPLEX, &
+                           recvbuf, recvcounts, rdispls, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+
+        !$acc parallel loop collapse(3) gang vector default(present) copy(recvbuf)
+        do i = 1, n+1
+            do j = 1, (p+1)/2+1
+                do k = 1, m+1
+                    offset = (i-1)*((p+1)/2+1)*(m+1) + (j-1)*(m+1) + k 
+                    complex_x_gpu(i, j, k) = recvbuf(offset)
+                end do
+            end do
+        end do
+
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_transpose_y2x_mpi
+
+    subroutine s_transpose_x2y_mpi      
+        complex(dp), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: sendcounts(num_procs), recvcounts(num_procs)
+        integer :: sdispls(num_procs), rdispls(num_procs)
+        integer :: total_size, offset
+        integer :: i, j, k, r
+      
+        total_size = (m+1) * (n+1) * ((p+1)/2+1)
+
+        allocate(sendbuf(total_size))
+        allocate(recvbuf(total_size))
+      
+        offset = 0
+        !$acc parallel loop collapse(3) gang vector default(present) copy(offset, sendbuf)
+        do i = 1, n+1
+            do j = 1, (p+1)/2+1
+                do k = 1, m+1
+                    offset = offset + 1
+                    sendbuf(offset) = complex_x_gpu(i, j, k)
+                end do
+            end do
+        end do
+      
+        do r = 1, num_procs
+            sendcounts(r) = total_size / num_procs
+            recvcounts(r) = total_size / num_procs
+            sdispls(r) = (r-1) * sendcounts(r) + 1
+            rdispls(r) = (r-1) * recvcounts(r) + 1
+        end do
+      
+        call MPI_Alltoallv(sendbuf, sendcounts, sdispls, MPI_DOUBLE_COMPLEX, &
+                           recvbuf, recvcounts, rdispls, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+      
+        offset = 0
+        !$acc parallel loop collapse(3) gang vector default(present) copy(offset, recvbuf)
+        do i = 1, m+1
+            do j = 1, (p+1)/2+1
+                do k = 1, n+1
+                    offset = offset + 1
+                    complex_y_gpu(i, j, k) = recvbuf(offset)
+                end do
+            end do
+        end do
+      
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_transpose_x2y_mpi
+
+    subroutine s_transpose_y2z_mpi(complex_z_gpu)
+        complex(dp), intent(inout) :: complex_z_gpu(m+1, n+1, (p+1)/2+1)
+        complex(dp), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: sendcounts(num_procs), recvcounts(num_procs)
+        integer :: sdispls(num_procs), rdispls(num_procs)
+        integer :: total_size, offset
+        integer :: i, j, k, r
+      
+        total_size = (m+1) * (n+1) * ((p+1)/2+1)
+
+        allocate(sendbuf(total_size))
+        allocate(recvbuf(total_size))
+      
+        offset = 0
+        !$acc parallel loop collapse(3) gang vector default(present) copy(offset, sendbuf)
+        do i = 1, m+1
+            do j = 1, (p+1)/2+1
+                do k = 1, n+1
+                    offset = offset + 1
+                    sendbuf(offset) = complex_y_gpu(i, j, k)
+                end do
+            end do
+        end do
+      
+        do r = 1, num_procs
+            sendcounts(r) = total_size / num_procs
+            recvcounts(r) = total_size / num_procs
+            sdispls(r) = (r-1) * sendcounts(r) + 1
+            rdispls(r) = (r-1) * recvcounts(r) + 1
+        end do
+      
+        call MPI_Alltoallv(sendbuf, sendcounts, sdispls, MPI_DOUBLE_COMPLEX, &
+                           recvbuf, recvcounts, rdispls, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+      
+        offset = 0
+        !$acc parallel loop collapse(3) gang vector default(present) copy(offset, recvbuf) 
+        do i = 1, m+1
+            do j = 1, n+1
+                do k = 1, (p+1)/2+1
+                    offset = offset + 1
+                    complex_z_gpu(i, j, k) = recvbuf(offset)
+                end do
+            end do
+        end do
+      
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_transpose_y2z_mpi
 
     !>  The purpose of this subroutine is to apply a Fourier low-
         !!      pass filter to the flow variables in the azimuthal direction
@@ -700,7 +1029,7 @@ contains
         @:DEALLOCATE(fluid_indicator_function_I%sf)
 
 #if defined(MFC_OpenACC)
-        @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+        @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu, complex_y_gpu, complex_x_gpu)
 
         ierr = cufftDestroy(forward_plan_gpu)
         ierr = cufftDestroy(backward_plan_gpu)

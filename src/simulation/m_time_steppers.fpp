@@ -1456,7 +1456,7 @@ contains
         end do
 
         ! set density and momentum buffers
-#if defined(MFC_OpenACC)
+#ifdef MFC_MPI
         do i = 1, momxe 
             call s_populate_scalarfield_buffers(q_cons_vf(i))
         end do
@@ -1552,7 +1552,7 @@ contains
         end do
 
         ! set boundary buffer zone values
-#if defined(MFC_OpenACC)
+#ifdef MFC_MPI
         do l = 1, num_dims 
             do q = 1, num_dims
                 call s_populate_scalarfield_buffers(pt_Re_stress(l)%vf(q))
@@ -1612,7 +1612,7 @@ contains
         integer :: i, j, k, l, q
 
         ! set buffers for filtered momentum quantities and density
-#if defined(MFC_OpenACC)
+#ifdef MFC_MPI
         do i = 1, momxe 
             call s_populate_scalarfield_buffers(q_cons_filtered(i))
         end do
@@ -1684,7 +1684,7 @@ contains
         end do
 
         ! set boundary buffer zone values
-#if defined(MFC_OpenACC)
+#ifdef MFC_MPI
         do l = 1, num_dims
             do q = 1, num_dims
                 call s_populate_scalarfield_buffers(R_mu(l)%vf(q))

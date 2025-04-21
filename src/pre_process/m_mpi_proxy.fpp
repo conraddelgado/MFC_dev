@@ -55,7 +55,7 @@ contains
             & 'mixlayer_perturb', 'bubbles_euler', 'polytropic', 'polydisperse',&
             & 'qbmm', 'file_per_process', 'adv_n', 'ib' , 'cfl_adap_dt',       &
             & 'cfl_const_dt', 'cfl_dt', 'surface_tension',                     &
-            & 'hyperelasticity', 'pre_stress', 'periodic_ibs', 'store_levelset', 'pencil_domain_decomposition' ]
+            & 'hyperelasticity', 'pre_stress', 'periodic_ibs', 'store_levelset', 'pencil_domain_decomposition', 'slab_domain_decomposition' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
         call MPI_BCAST(fluid_rho(1), num_fluids_max, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
@@ -222,6 +222,18 @@ contains
                         end if
 
                     end do
+
+                else if (slab_domain_decomposition) then
+                    if (proc_rank == 0) then 
+                        print *, 'slab domain decomposition...'
+                    end if
+
+                    ! continuous x and y direction 
+                    ! block decomposition in z
+                    num_procs_x = 1
+                    num_procs_y = 1
+                    num_procs_z = num_procs
+                    ierr = 0
 
                 else if (pencil_domain_decomposition) then 
                     if (proc_rank == 0) then 

@@ -212,7 +212,7 @@ contains
             & 'cfl_adap_dt', 'cfl_const_dt', 'cfl_dt', 'surface_tension',        &
             & 'viscous', 'shear_stress', 'bulk_stress', 'bubbles_lagrange',     &
             & 'hyperelasticity', 'rkck_adap_dt', 'periodic_forcing', 'periodic_ibs', &
-            & 'compute_CD_vi', 'compute_CD_si', 'fourier_transform_filtering', 'store_levelset', 'pencil_domain_decomposition' ]
+            & 'compute_CD_vi', 'compute_CD_si', 'fourier_transform_filtering', 'store_levelset', 'pencil_domain_decomposition', 'slab_domain_decomposition' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -412,6 +412,18 @@ contains
                         end if
 
                     end do
+                
+                else if (slab_domain_decomposition) then
+                    if (proc_rank == 0) then 
+                        print *, 'slab domain decomposition...'
+                    end if
+
+                    ! continuous x and y direction 
+                    ! block decomposition in z
+                    num_procs_x = 1
+                    num_procs_y = 1
+                    num_procs_z = num_procs
+                    ierr = 0
 
                 else if (pencil_domain_decomposition) then 
                     if (proc_rank == 0) then 

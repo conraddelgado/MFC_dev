@@ -164,6 +164,7 @@ module m_global_parameters
 
     logical :: store_levelset !< store levelset and levelset_norm data, if false: compute levelset on fly
     logical :: pencil_domain_decomposition
+    logical :: slab_domain_decomposition
 
     !$acc declare create(chemistry)
 
