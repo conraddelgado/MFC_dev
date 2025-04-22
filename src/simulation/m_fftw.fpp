@@ -616,6 +616,7 @@ contains
     subroutine s_mpi_perform_transpose_forward(complex_in_gpu_mpi)
         complex(dp), intent(inout) :: complex_in_gpu_mpi(m+1, n+1, (p+1)/2+1)
 
+#if defined(MFC_OpenACC)
         call s_transpose_z2y_mpi(complex_in_gpu_mpi) ! -> gives complex_y_gpu
 
         ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_FORWARD) 
@@ -623,6 +624,7 @@ contains
         call s_transpose_y2x_mpi ! gives complex_x_gpu
 
         ierr = cufftExecZ2Z(plan_x_gpu, complex_x_gpu, complex_data_gpu_mpi, CUFFT_FORWARD) 
+#endif
 
     end subroutine s_mpi_perform_transpose_forward
     
@@ -630,6 +632,7 @@ contains
     subroutine s_mpi_perform_transpose_backward(complex_in_gpu_mpi)
         complex(dp), intent(inout) :: complex_in_gpu_mpi(m+1, n+1, (p+1)/2+1)
 
+#if defined(MFC_OpenACC)
         ierr = cufftExecZ2Z(plan_x_gpu, complex_data_gpu_mpi, complex_x_gpu, CUFFT_INVERSE)
 
         call s_transpose_x2y_mpi !< gives complex_y_gpu
@@ -637,6 +640,7 @@ contains
         ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_INVERSE) 
 
         call s_transpose_y2z_mpi(complex_in_gpu_mpi) 
+#endif
 
     end subroutine s_mpi_perform_transpose_backward
 
@@ -648,6 +652,7 @@ contains
         integer :: total_size, offset
         integer :: i, j, k, r, s
 
+#if defined(MFC_OpenACC)
         total_size = (m+1) * (n+1) * ((p+1)/2+1)
 
         allocate(sendbuf(total_size))
@@ -684,6 +689,7 @@ contains
         end do
 
         deallocate(sendbuf, recvbuf)
+#endif
     end subroutine s_transpose_z2y_mpi
 
     subroutine s_transpose_y2x_mpi
@@ -693,6 +699,7 @@ contains
         integer :: total_size, offset
         integer :: i, j, k, s, r
 
+#if defined(MFC_OpenACC)
         total_size = (m+1) * (n+1) * ((p+1)/2+1)
 
         allocate(sendbuf(total_size))
@@ -729,6 +736,7 @@ contains
         end do
 
         deallocate(sendbuf, recvbuf)
+#endif
     end subroutine s_transpose_y2x_mpi
 
     subroutine s_transpose_x2y_mpi      
@@ -738,6 +746,7 @@ contains
         integer :: total_size, offset
         integer :: i, j, k, r
       
+#if defined(MFC_OpenACC)
         total_size = (m+1) * (n+1) * ((p+1)/2+1)
 
         allocate(sendbuf(total_size))
@@ -776,6 +785,7 @@ contains
         end do
       
         deallocate(sendbuf, recvbuf)
+#endif
     end subroutine s_transpose_x2y_mpi
 
     subroutine s_transpose_y2z_mpi(complex_z_gpu)
@@ -786,6 +796,7 @@ contains
         integer :: total_size, offset
         integer :: i, j, k, r
       
+#if defined(MFC_OpenACC)
         total_size = (m+1) * (n+1) * ((p+1)/2+1)
 
         allocate(sendbuf(total_size))
@@ -824,6 +835,7 @@ contains
         end do
       
         deallocate(sendbuf, recvbuf)
+#endif
     end subroutine s_transpose_y2z_mpi
 
     !>  The purpose of this subroutine is to apply a Fourier low-
