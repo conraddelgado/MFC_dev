@@ -1029,7 +1029,8 @@ contains
         @:DEALLOCATE(fluid_indicator_function_I%sf)
 
 #if defined(MFC_OpenACC)
-        @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu, complex_y_gpu, complex_x_gpu)
+        @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+        @:DEALLOCATE(complex_data_gpu_mpi, complex_kernelG_gpu_mpi, complex_y_gpu, complex_x_gpu)
 
         ierr = cufftDestroy(forward_plan_gpu)
         ierr = cufftDestroy(backward_plan_gpu)
