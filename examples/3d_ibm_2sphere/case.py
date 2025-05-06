@@ -28,9 +28,9 @@ dt = 4.0E-06
 Nt = 5
 t_save = 1
 
-Nx = 255
-Ny = Nx
-Nz = Ny
+Nx = 63
+Ny = 99
+Nz = 127
 
 # immersed boundary dictionary
 ib_dict = {}
@@ -147,7 +147,7 @@ case_dict = {
     "mu_visc": mu,
 
     "store_levelset": "F",
-    "pencil_domain_decomposition": "T", 
+    "slab_domain_decomposition": "T", 
     }
 
 case_dict.update(ib_dict)
