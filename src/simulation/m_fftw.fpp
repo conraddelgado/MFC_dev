@@ -77,7 +77,8 @@ module m_fftw
 
     integer :: ierr
 
-    ! new for explicit filtering of data
+    ! ============ NEW ADDITIONS ============
+    ! fluid indicator function (1 = fluid, 0 = otherwise)
     type(scalar_field), public :: fluid_indicator_function_I
     !$acc declare create(fluid_indicator_function_I)
 
@@ -85,14 +86,7 @@ module m_fftw
     real(dp), allocatable, target :: real_data_gpu(:, :, :)
     complex(dp), allocatable, target :: complex_data_gpu(:, :, :)
 
-    complex(dp), allocatable, target :: complex_y_gpu(:)
-    complex(dp), allocatable, target :: complex_x_gpu(:)
-
-    real(dp), allocatable, target :: real_kernelG_gpu(:, :, :)
     complex(dp), allocatable, target :: complex_kernelG_gpu(:, :, :)
-
-    complex(dp), allocatable, target :: complex_kernelG_gpu_mpi(:)
-    complex(dp), allocatable, target :: complex_data_gpu_mpi(:)
 
     integer :: forward_plan_gpu
     integer :: backward_plan_gpu
@@ -102,42 +96,33 @@ module m_fftw
     integer :: plan_y_gpu 
     integer :: plan_x_gpu
 
-    !$acc declare create(real_data_gpu, complex_data_gpu, complex_y_gpu, complex_x_gpu, real_kernelG_gpu, complex_kernelG_gpu, complex_kernelG_gpu_mpi, complex_data_gpu_mpi)
+    !$acc declare create(real_data_gpu, complex_data_gpu, real_kernelG_in, complex_kernelG_gpu)
 #endif
-    type(c_ptr) :: plan_forward
-    type(c_ptr) :: plan_backward
-
-    real(c_double), pointer :: array_in(:, :, :)
-    complex(c_double_complex), pointer :: array_out(:, :, :)
-
-    type(c_ptr) :: p_real
-    type(c_ptr) :: p_complex
-
-    ! for filtering kernel
-    type(c_ptr) :: plan_kernelG_forward
-
-    real(c_double), pointer :: array_kernelG_in(:, :, :)
-    complex(c_double_complex), pointer :: array_kernelG_out(:, :, :)
-
-    type(c_ptr) :: p_kernelG_real
-    type(c_ptr) :: p_kernelG_complex
-
+    ! CPU plans
     type(c_ptr) :: plan_x_r2c_fwd, plan_x_c2r_bwd
     type(c_ptr) :: plan_y_c2c_fwd, plan_y_c2c_bwd 
     type(c_ptr) :: plan_z_c2c_fwd, plan_z_c2c_bwd
+    type(c_ptr) :: plan_x_r2c_kernelG, plan_y_c2c_kernelG, plan_z_c2c_kernelG
 
+    ! domain size information
     integer :: Nx, Ny, Nz, NxC, Nyloc, Nzloc
 
-    real(c_double), allocatable :: data_real_in1d(:, :, :) 
-    real(c_double), allocatable :: data_real_in_1d(:) 
-    complex(c_double_complex), allocatable :: data_cmplx_out(:, :, :)
+    ! 1D real and complex vectors for FFT routines
+    real(c_double), allocatable :: data_real_in1d(:) 
     complex(c_double_complex), allocatable :: data_cmplx_out1d(:)
-    complex(c_double_complex), allocatable :: data_cmplx_out1d2(:)
+    complex(c_double_complex), allocatable :: data_cmplx_out1dy(:)
 
-    real(c_double), allocatable :: real_test(:, :, :)
-    complex(c_double_complex), allocatable :: complex_test(:, :, :)
-    real(c_double), allocatable :: real_test1d(:)
-    complex(c_double_complex), allocatable :: complex_test1d(:)
+    ! 3D arrays for slab transposes
+    complex(c_double_complex), allocatable :: data_cmplx_slabz(:, :, :), data_cmplx_slaby(:, :, :)
+
+    ! input array for FFT
+    real(c_double), allocatable :: data_real_3D_slabz(:, :, :)
+
+    ! filtering kernel in physical space
+    real(c_double), allocatable, target :: real_kernelG_in(:, :, :)
+
+    ! FFT of filtering kernel
+    complex(c_double_complex), allocatable :: cmplx_kernelG1d(:)
 
     integer :: size_n(1), inembed(1), onembed(1)
 
@@ -214,49 +199,15 @@ contains
         @:ALLOCATE(real_data_gpu(m+1, n+1, p+1))
         @:ALLOCATE(complex_data_gpu((m+1)/2+1, n+1, p+1))
 
-        ! MPI transpose arrays
-        @:ALLOCATE(complex_y_gpu(1:((m+1)/2+1) * (p+1) * (n+1)))
-        @:ALLOCATE(complex_x_gpu(1:(n+1) * (p+1) * ((m+1)/2+1)))
-
         ! gpu kernel arrays
-        @:ALLOCATE(real_kernelG_gpu(m+1, n+1, p+1))
         @:ALLOCATE(complex_kernelG_gpu((m+1)/2+1, n+1, p+1))
-
-        ! MPI transposed complex kernel array
-        @:ALLOCATE(complex_kernelG_gpu_mpi(1:(n+1) * (p+1) * ((m+1)/2+1)))
-
-        ! MPI transposed complex data array
-        @:ALLOCATE(complex_data_gpu_mpi(1:(n+1) * (p+1) * ((m+1)/2+1)))
 
         ! gpu plan creation
         ierr = cufftPlan3d(forward_plan_gpu, p+1, n+1, m+1, CUFFT_D2Z)
         ierr = cufftPlan3d(backward_plan_gpu, p+1, n+1, m+1, CUFFT_Z2D)
 
         ierr = cufftPlan3d(forward_plan_kernelG_gpu, p+1, n+1, m+1, CUFFT_D2Z)            
-
-#else
-        ! CPU
-        ! data setup 
-        p_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
-        p_complex = fftw_alloc_complex(int(((m+1)/2+1)*(n+1)*(p+1), C_SIZE_T))
-
-        call c_f_pointer(p_real, array_in, [m+1, n+1, p+1])
-        call c_f_pointer(p_complex, array_out, [(m+1)/2+1, n+1, p+1])
-
-        plan_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_in, array_out, FFTW_MEASURE)
-        plan_backward = fftw_plan_dft_c2r_3d(p+1, n+1, m+1, array_out, array_in, FFTW_MEASURE)
-
-        ! kernel setup
-        p_kernelG_real = fftw_alloc_real(int((m+1)*(n+1)*(p+1), C_SIZE_T))
-        p_kernelG_complex = fftw_alloc_complex(int(((m+1)/2+1)*(n+1)*(p+1), C_SIZE_T))
-
-        call c_f_pointer(p_kernelG_real, array_kernelG_in, [m+1, n+1, p+1])
-        call c_f_pointer(p_kernelG_complex, array_kernelG_out, [(m+1)/2+1, n+1, p+1])
-
-        plan_kernelG_forward = fftw_plan_dft_r2c_3d(p+1, n+1, m+1, array_kernelG_in, array_kernelG_out, FFTW_MEASURE)
-
 #endif
-
         !< global sizes 
         Nx = m_glb + 1
         Ny = n_glb + 1
@@ -264,48 +215,47 @@ contains
 
         !< complex size
         NxC = Nx/2 + 1
+
         !< local sizes on each processor
         Nyloc = Ny / num_procs
         Nzloc = p + 1
 
-        @:ALLOCATE(data_real_in1d(Nx, Ny, Nzloc))
-        @:ALLOCATE(data_cmplx_out(NxC, Ny, Nzloc))
-        @:ALLOCATE(data_real_in_1d(Nx*Ny*Nzloc))
+        @:ALLOCATE(data_real_in1d(Nx*Ny*Nzloc))
         @:ALLOCATE(data_cmplx_out1d(NxC*Ny*Nz/num_procs))
-        @:ALLOCATE(data_cmplx_out1d2(NxC*Ny*Nz/num_procs))
-        @:ALLOCATE(real_test(Nx, Ny, Nzloc))
-        @:ALLOCATE(complex_test(NxC, Ny, Nzloc))
-        @:ALLOCATE(real_test1d(Nx*Ny*Nzloc))
-        @:ALLOCATE(complex_test1d(NxC*Ny*Nzloc))
+        @:ALLOCATE(data_cmplx_out1dy(NxC*Ny*Nz/num_procs))
+        @:ALLOCATE(cmplx_kernelG1d(NxC*Nyloc*Nz))
+        @:ALLOCATE(real_kernelG_in(Nx, Ny, Nzloc))
+        @:ALLOCATE(data_real_3D_slabz(Nx, Ny, Nzloc))
+        @:ALLOCATE(data_cmplx_slabz(NxC, Ny, Nzloc))
+        @:ALLOCATE(data_cmplx_slaby(NxC, Nyloc, Nz))
 
         !< X - direction plans
         size_n(1) = Nx
         inembed(1) = Nx
         onembed(1) = NxC
-        plan_x_r2c_fwd = fftw_plan_many_dft_r2c(1, size_n, Ny*Nzloc, &                    ! rank, n, howmany
-                                                data_real_in_1d, inembed, 1, Nx, &        ! in, inembed, istride, idist
-                                                data_cmplx_out1d, onembed, 1, NxC, &     ! out, onembed, ostride, odist
-                                                FFTW_ESTIMATE)                            ! sign, flags
+        plan_x_r2c_fwd = fftw_plan_many_dft_r2c(1, size_n, Ny*Nzloc, &                  ! rank, n, howmany
+                                                data_real_in1d, inembed, 1, Nx, &       ! in, inembed, istride, idist
+                                                data_cmplx_out1d, onembed, 1, NxC, &    ! out, onembed, ostride, odist
+                                                FFTW_MEASURE)                           ! sign, flags
         size_n(1) = Nx
         inembed(1) = NxC
         onembed(1) = Nx                                                         
         plan_x_c2r_bwd = fftw_plan_many_dft_c2r(1, size_n, Ny*Nzloc, & 
                                                 data_cmplx_out1d, inembed, 1, NxC, & 
-                                                data_real_in_1d, onembed, 1, Nx, & 
-                                                FFTW_ESTIMATE)
+                                                data_real_in1d, onembed, 1, Nx, & 
+                                                FFTW_MEASURE)
         !< Y - direction plans
         size_n(1) = Ny
         inembed(1) = Ny
         onembed(1) = Ny
         plan_y_c2c_fwd = fftw_plan_many_dft(1, size_n, NxC*Nzloc, & 
-                                            data_cmplx_out1d2, inembed, 1, Ny, & 
-                                            data_cmplx_out1d2, onembed, 1, Ny, & 
-                                            FFTW_FORWARD, FFTW_ESTIMATE)
+                                            data_cmplx_out1dy, inembed, 1, Ny, & 
+                                            data_cmplx_out1dy, onembed, 1, Ny, & 
+                                            FFTW_FORWARD, FFTW_MEASURE)
         plan_y_c2c_bwd = fftw_plan_many_dft(1, size_n, NxC*Nzloc, & 
-                                            data_cmplx_out1d2, inembed, 1, Ny, & 
-                                            data_cmplx_out1d2, onembed, 1, Ny, & 
-                                            FFTW_BACKWARD, FFTW_ESTIMATE)
-
+                                            data_cmplx_out1dy, inembed, 1, Ny, & 
+                                            data_cmplx_out1dy, onembed, 1, Ny, & 
+                                            FFTW_BACKWARD, FFTW_MEASURE)
         !< Z - direction plans
         size_n(1) = Nz 
         inembed(1) = Nz 
@@ -313,12 +263,36 @@ contains
         plan_z_c2c_fwd = fftw_plan_many_dft(1, size_n, NxC*Nyloc, & 
                                             data_cmplx_out1d, inembed, 1, Nz, & 
                                             data_cmplx_out1d, onembed, 1, Nz, & 
-                                            FFTW_FORWARD, FFTW_ESTIMATE)
+                                            FFTW_FORWARD, FFTW_MEASURE)
         plan_z_c2c_bwd = fftw_plan_many_dft(1, size_n, NxC*Nyloc, & 
                                             data_cmplx_out1d, inembed, 1, Nz, &
                                             data_cmplx_out1d, onembed, 1, Nz, & 
-                                            FFTW_BACKWARD, FFTW_ESTIMATE)
-
+                                            FFTW_BACKWARD, FFTW_MEASURE)
+        ! forward plans for filtering kernel
+        ! X kernel plan
+        size_n(1) = Nx
+        inembed(1) = Nx
+        onembed(1) = NxC
+        plan_x_r2c_kernelG = fftw_plan_many_dft_r2c(1, size_n, Ny*Nzloc, &                    
+                                                    data_real_in1d, inembed, 1, Nx, &        
+                                                    cmplx_kernelG1d, onembed, 1, NxC, &    
+                                                    FFTW_MEASURE)          
+        ! Y kernel plan                  
+        size_n(1) = Ny
+        inembed(1) = Ny
+        onembed(1) = Ny
+        plan_y_c2c_kernelG = fftw_plan_many_dft(1, size_n, NxC*Nzloc, & 
+                                                data_cmplx_out1dy, inembed, 1, Ny, & 
+                                                data_cmplx_out1dy, onembed, 1, Ny, & 
+                                                FFTW_FORWARD, FFTW_MEASURE)
+        ! Z kernel plan
+        size_n(1) = Nz 
+        inembed(1) = Nz 
+        onembed(1) = Nz 
+        plan_z_c2c_kernelG = fftw_plan_many_dft(1, size_n, NxC*Nyloc, & 
+                                                cmplx_kernelG1d, inembed, 1, Nz, & 
+                                                cmplx_kernelG1d, onembed, 1, Nz, & 
+                                                FFTW_FORWARD, FFTW_MEASURE)
     end subroutine s_initialize_fftw_explicit_filter_module
 
     !< initialize the gaussian filtering kernel in real space and then compute its DFT
@@ -338,10 +312,7 @@ contains
         Lz = z_domain_end_glb - z_domain_beg_glb    
         
         G_norm_int = 0.0_dp
-
-        print *, 'x, y, z local index sizes', m, n, p, num_procs
-
-#if defined(MFC_OpenACC)    
+   
         !$acc parallel loop collapse(3) gang vector default(present) reduction(+:G_norm_int) copyin(Lx, Ly, Lz, sigma_stddev) private(x_r, y_r, z_r, r2)
         do i = 0, m 
             do j = 0, n 
@@ -352,9 +323,9 @@ contains
 
                     r2 = x_r**2 + y_r**2 + z_r**2
 
-                    real_kernelG_gpu(i+1, j+1, k+1) = exp(-r2 / (2.0_dp*sigma_stddev**2))
+                    real_kernelG_in(i+1, j+1, k+1) = exp(-r2 / (2.0_dp*sigma_stddev**2))
 
-                    G_norm_int = G_norm_int + real_kernelG_gpu(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
+                    G_norm_int = G_norm_int + real_kernelG_in(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
                 end do 
             end do
         end do
@@ -366,112 +337,93 @@ contains
         do i = 1, m+1 
             do j = 1, n+1 
                 do k = 1, p+1
-                    real_kernelG_gpu(i, j, k) = real_kernelG_gpu(i, j, k) / G_norm_int_glb
+                    real_kernelG_in(i, j, k) = real_kernelG_in(i, j, k) / G_norm_int_glb
                 end do 
             end do 
         end do
 
+
+#if defined(MFC_OpenACC) 
         ! perform fourier transform on gaussian kernel
-        ierr = cufftExecD2Z(forward_plan_kernelG_gpu, real_kernelG_gpu, complex_kernelG_gpu)
+        ierr = cufftExecD2Z(forward_plan_kernelG_gpu, real_kernelG_in, complex_kernelG_gpu)
 
-        ! transpose DFT data, only necessary with MPI domain decomposition and more than one rank
-        if (num_procs > 1) then
-            call s_transpose_z2y_mpi(complex_kernelG_gpu, complex_y_gpu) 
-
-            ierr = cufftExecZ2Z(plan_y_gpu, complex_y_gpu, complex_y_gpu, CUFFT_FORWARD) 
-
-            call s_transpose_y2x_mpi(complex_y_gpu, complex_x_gpu)
-
-            ierr = cufftExecZ2Z(plan_x_gpu, complex_x_gpu, complex_kernelG_gpu_mpi, CUFFT_FORWARD)
-
-            ! normalize filtering kernel after fourier transform
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, n+1
-                do j = 1, p+1
-                    do k = 1, (m+1)/2+1
-                        complex_kernelG_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) = complex_kernelG_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
-                    end do 
+        ! normalize transformed kernel (divide by Nx*Ny*Nz)
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, (m+1)/2+1
+            do j = 1, n+1
+                do k = 1, p+1
+                    complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
                 end do 
-            end do
-        
-        else ! 1 rank
-            ! normalize transformed kernel (divide by Nx*Ny*Nz)
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, (m+1)/2+1
-                do j = 1, n+1
-                    do k = 1, p+1
-                        complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
-                    end do 
-                end do 
-            end do
-        end if
-
-#else
-        ! CPU
-        do i = 0, m 
-            do j = 0, n 
-                do k = 0, p 
-                    x_r = min(abs(x_cc(i) - x_domain_beg_glb), Lx - abs(x_cc(i) - x_domain_beg_glb))
-                    y_r = min(abs(y_cc(j) - y_domain_beg_glb), Ly - abs(y_cc(j) - y_domain_beg_glb))
-                    z_r = min(abs(z_cc(k) - z_domain_beg_glb), Lz - abs(z_cc(k) - z_domain_beg_glb))
-
-                    r2 = x_r**2 + y_r**2 + z_r**2
-
-                    array_kernelG_in(i+1, j+1, k+1) = exp(-r2 / (2.0_dp*sigma_stddev**2))
-
-                    G_norm_int = G_norm_int + array_kernelG_in(i+1, j+1, k+1)*dx(i)*dy(j)*dz(k)
-                end do 
-            end do
-        end do
-
-        call s_mpi_allreduce_sum(G_norm_int, G_norm_int_glb) 
-
-        array_kernelG_in = array_kernelG_in / G_norm_int_glb ! normalize gaussian, integrate to unity over domain
-
-        call fftw_execute_dft_r2c(plan_kernelG_forward, array_kernelG_in, array_kernelG_out)
-        
-        array_kernelG_out = array_kernelG_out / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp)) ! normalize DFT
-
-        idx = 0
-        do k = 1, Nzloc 
-            do j = 1, Ny
-                do i = 1, Nx 
-                    idx = idx + 1
-                    data_real_in_1d(idx) = array_kernelG_in(i, j, k)
-                end do
-            end do
-        end do
-
-        real_test1d = data_real_in_1d
-        print *, data_real_in_1d(20:23)
-        call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in_1d, data_cmplx_out1d)
-        call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in_1d)
-        print *, 'X FFT', maxval(real_test1d - data_real_in_1d/Nx)
-        print *, data_real_in_1d(20:23)/Nx
-
-        call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in_1d, data_cmplx_out1d)
-        complex_test1d = data_cmplx_out1d
-        print *, data_cmplx_out1d(20:22)
-        do i = 1, NxC 
-            do j = 1, Ny 
-                do k = 1, Nzloc 
-                    data_cmplx_out1d2(j + (i-1)*Ny + (k-1)*Ny*NxC) = data_cmplx_out1d(i + (j-1)*NxC + (k-1)*NxC*Ny)
-                end do
             end do 
         end do
-        call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1d2, data_cmplx_out1d2)
-        call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1d2, data_cmplx_out1d2)
-        do i = 1, NxC 
-            do j = 1, Ny 
-                do k = 1, Nzloc 
-                    data_cmplx_out1d(i + (j-1)*NxC + (k-1)*NxC*Ny) = data_cmplx_out1d2(j + (i-1)*Ny + (k-1)*Ny*NxC)
-                end do
-            end do 
-        end do
-        print *, 'Y FFT', maxval(real(complex_test1d, dp) - real(data_cmplx_out1d, dp)/Ny)
-        print *, data_cmplx_out1d(20:22)/Ny
-
 #endif
+
+        ! FFT filtering kernel
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_real_3D_slabz(i, j, k) = real_kernelG_in(i, j, k)
+                end do 
+            end do 
+        end do 
+
+        ! 3D z-slab -> 1D x, y, z
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_real_in1d(i + (j-1)*Nx + (k-1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ! X FFT
+        call fftw_execute_dft_r2c(plan_x_r2c_kernelG, data_real_in1d, cmplx_kernelG1d)
+
+        ! 1D x, y, z -> 1D y, x, z (CMPLX)
+        do i = 1, NxC
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC) = cmplx_kernelG1d(i + (j-1)*NxC + (k-1)*NxC*Ny)
+                end do 
+            end do 
+        end do
+
+        ! Y FFT 
+        call fftw_execute_dft(plan_y_c2c_kernelG, data_cmplx_out1dy, data_cmplx_out1dy)
+
+        ! 1D y, x, z -> 3D z-slab
+        do i = 1, NxC 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_slabz(i, j, k) = data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC)
+                end do 
+            end do 
+        end do 
+
+        ! transpose z-slab to y-slab
+        call s_mpi_transpose_slabZ2Y 
+
+        ! 3D y-slab -> 1D z, x, y
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz
+                    cmplx_kernelG1d(k + (i-1)*Nz + (j-1)*Nz*NxC) = data_cmplx_slaby(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ! Z FFT
+        call fftw_execute_dft(plan_z_c2c_kernelG, cmplx_kernelG1d, cmplx_kernelG1d)
+
+        ! normalize FFT 
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz
+                    cmplx_kernelG1d(k + (i-1)*Nz + (j-1)*Nz*NxC) = cmplx_kernelG1d(k + (i-1)*Nz + (j-1)*Nz*NxC) / (real(Nx*Ny*Nz, dp))
+                end do 
+            end do 
+        end do
+        ! return cmplx_kernelG1d: 1D z, x, y
 
     end subroutine s_initialize_filtering_kernel
 
@@ -508,30 +460,14 @@ contains
 
         ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
 
-        if (num_procs > 1) then
-            call s_mpi_perform_transpose_forward(complex_data_gpu) 
-
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, n+1
-                do j = 1, p+1
-                    do k = 1, (m+1)/2+1
-                        complex_data_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) = complex_data_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) * complex_kernelG_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1))
-                    end do 
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, (m+1)/2+1
+            do j = 1, n+1 
+                do k = 1, p+1
+                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
                 end do 
-            end do
-
-            call s_mpi_perform_transpose_backward(complex_data_gpu)
-
-        else ! 1 rank
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, (m+1)/2+1
-                do j = 1, n+1 
-                    do k = 1, p+1
-                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                    end do 
-                end do 
-            end do
-        end if
+            end do 
+        end do
 
         ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
 
@@ -543,19 +479,31 @@ contains
                 end do
             end do
         end do
-
-#else
-        ! CPU
-        array_in(1:m+1, 1:n+1, 1:p+1) = fluid_indicator_function_I%sf(0:m, 0:n, 0:p)
-
-        call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
-
-        array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
-
-        call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
-
-        filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
 #endif
+
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc 
+                    data_real_3D_slabz(i, j, k) = fluid_indicator_function_I%sf(i-1, j-1, k-1)
+                end do 
+            end do 
+        end do 
+        call s_mpi_FFT_fwd 
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz
+                    data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC) = data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC) * cmplx_kernelG1d(k + (i-1)*Nz + (j-1)*Nz*NxC)
+                end do
+            end do 
+        end do
+        call s_mpi_FFT_bwd
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    filtered_fluid_indicator_function%sf(i-1, j-1, k-1) = data_real_3D_slabz(i, j, k) / (real(Nx*Ny*Nz, dp))
+                end do 
+            end do
+        end do
 
     end subroutine s_initialize_filtered_fluid_indicator_function
 
@@ -564,7 +512,7 @@ contains
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
 
-        integer :: i, j, k, l, q
+        integer :: l
 
         do l = 1, sys_size-1
             call s_apply_fftw_filter_scalarfield(q_cons_filtered(advxb), .true., q_cons_vf(l), q_cons_filtered(l))
@@ -605,30 +553,14 @@ contains
             
         ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
 
-        if (num_procs > 1) then 
-            call s_mpi_perform_transpose_forward(complex_data_gpu)
-
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, n+1
-                do j = 1, p+1
-                    do k = 1, (m+1)/2+1
-                        complex_data_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) = complex_data_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1)) * complex_kernelG_gpu_mpi(k + (j-1)*((m+1)/2+1) + (i-1)*(p+1)*((m+1)/2+1))
-                    end do 
-                end do 
-            end do
-
-            call s_mpi_perform_transpose_backward(complex_data_gpu)
-
-        else ! 1 rank
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 1, (m+1)/2+1
-                do j = 1, n+1
-                    do k = 1, p+1
-                        complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                    end do
+        !$acc parallel loop collapse(3) gang vector default(present)
+        do i = 1, (m+1)/2+1
+            do j = 1, n+1
+                do k = 1, p+1
+                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
                 end do
             end do
-        end if
+        end do
 
         ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
         
@@ -651,23 +583,55 @@ contains
                 end do
             end do
         end if 
+#endif
 
-#else 
-        ! CPU
-        array_in(1:m+1, 1:n+1, 1:p+1) = q_temp_in%sf(0:m, 0:n, 0:p) * fluid_indicator_function_I%sf(0:m, 0:n, 0:p)
+        if (fluid_quantity) then 
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        data_real_3D_slabz(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * fluid_indicator_function_I%sf(i, j, k)
+                    end do 
+                end do 
+            end do
+        else 
+            do i = 0, m 
+                do j = 0, n 
+                    do k = 0, p 
+                        data_real_3D_slabz(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * (1.0_dp - fluid_indicator_function_I%sf(i, j, k))
+                    end do 
+                end do 
+            end do
+        end if
 
-        call fftw_execute_dft_r2c(plan_forward, array_in, array_out)
+        call s_mpi_FFT_fwd 
 
-        array_out(:, :, :) = array_out(:, :, :) * array_kernelG_out(:, :, :)
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz 
+                    data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC) = data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC) * cmplx_kernelG1d(k + (i-1)*Nz + (j-1)*Nz*NxC)
+                end do 
+            end do 
+        end do
 
-        call fftw_execute_dft_c2r(plan_backward, array_out, array_in)
+        call s_mpi_FFT_bwd
 
         if (present(q_temp_out)) then 
-            q_temp_out%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        q_temp_out%sf(i, j, k) = data_real_3D_slabz(i+1, j+1, k+1) / (real(Nx*Ny*Nz, dp) * filtered_fluid_indicator_function%sf(i, j, k))
+                    end do 
+                end do 
+            end do
         else 
-            q_temp_in%sf(0:m, 0:n, 0:p) = array_in(1:m+1, 1:n+1, 1:p+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)) 
+            do i = 0, m
+                do j = 0, n 
+                    do k = 0, p 
+                        q_temp_in%sf(i, j, k) = data_real_3D_slabz(i+1, j+1, k+1) / (real(Nx*Ny*Nz, dp) * filtered_fluid_indicator_function%sf(i, j, k))      
+                    end do 
+                end do 
+            end do
         end if
-#endif
 
     end subroutine s_apply_fftw_filter_scalarfield
 
@@ -702,8 +666,186 @@ contains
 
     end subroutine s_apply_fftw_filter_tensor
 
- 
+    !< transpose domain from z-slabs to y-slabs on each processor
+    subroutine s_mpi_transpose_slabZ2Y
+        complex(c_double_complex), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: dest_rank, src_rank
+        integer :: i, j, k, idx
 
+        allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
+        allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
+
+        do dest_rank = 0, num_procs-1
+            do k = 1, Nzloc 
+                do j = dest_rank*Nyloc+1, (dest_rank+1)*Nyloc
+                    do i = 1, NxC
+                        idx = idx + 1
+                        sendbuf(i + (j-(dest_rank*Nyloc+1))*NxC + (k-1)*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slabz(i, j, k)
+                    end do 
+                end do
+            end do
+        end do
+
+        call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
+                          recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+
+        do src_rank = 0, num_procs-1
+            do k = src_rank*Nzloc+1, (src_rank+1)*Nzloc
+                do j = 1, Nyloc
+                    do i = 1, NxC
+                        data_cmplx_slaby(i, j, k) = recvbuf(i + (j-1)*NxC + (k-(src_rank*Nzloc+1))*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
+                    end do 
+                end do
+            end do 
+        end do
+
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_mpi_transpose_slabZ2Y
+
+    !< transpose domain from y-slabs to z-slabs on each processor
+    subroutine s_mpi_transpose_slabY2Z 
+        complex(c_double_complex), allocatable :: sendbuf(:), recvbuf(:)
+        integer :: dest_rank, src_rank
+        integer :: i, j, k
+
+        allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
+        allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
+
+        do dest_rank = 0, num_procs-1
+            do k = dest_rank*Nzloc+1, (dest_rank+1)*Nzloc
+                do j = 1, Nyloc 
+                    do i = 1, NxC 
+                        sendbuf(i + (j-1)*NxC + (k-(dest_rank*Nzloc+1))*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slaby(i, j, k)
+                    end do 
+                end do 
+            end do 
+        end do
+
+        call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
+                          recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+
+        do src_rank = 0, num_procs-1
+            do k = 1, Nzloc
+                do j = src_rank*Nyloc+1, (src_rank+1)*Nyloc
+                    do i = 1, NxC 
+                        data_cmplx_slabz(i, j, k) = recvbuf(i + (j-(src_rank*Nyloc+1))*NxC + (k-1)*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
+                    end do 
+                end do
+            end do 
+        end do
+        
+        deallocate(sendbuf, recvbuf)
+    end subroutine s_mpi_transpose_slabY2Z
+
+    !< compute forward FFT, input: data_real_3D_slabz, output: data_cmplx_out1d
+    subroutine s_mpi_FFT_fwd
+        integer :: i, j, k
+
+        ! 3D z-slab -> 1D x, y, z
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_real_in1d(i + (j-1)*Nx + (k-1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ! X FFT
+        call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
+
+        ! 1D x, y, z -> 1D y, x, z (CMPLX)
+        do i = 1, NxC
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC) = data_cmplx_out1d(i + (j-1)*NxC + (k-1)*NxC*Ny)
+                end do 
+            end do 
+        end do
+
+        ! Y FFT 
+        call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
+
+        ! 1D y, x, z -> 3D z-slab
+        do i = 1, NxC 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_slabz(i, j, k) = data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC)
+                end do 
+            end do 
+        end do 
+
+        ! transpose z-slab to y-slab
+        call s_mpi_transpose_slabZ2Y 
+
+        ! 3D y-slab -> 1D z, x, y
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz
+                    data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC) = data_cmplx_slaby(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ! Z FFT
+        call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
+
+        ! return data_cmplx_out1d: 1D z, x, y
+    end subroutine s_mpi_FFT_fwd
+
+    !< compute inverse FFT, input: data_cmplx_out1d, output: data_real_3D_slabz
+    subroutine s_mpi_FFT_bwd
+        integer :: i, j, k
+
+        ! Z inv FFT 
+        call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
+
+        ! 1D z, x, y -> 3D y-slab
+        do i = 1, NxC 
+            do j = 1, Nyloc 
+                do k = 1, Nz 
+                    data_cmplx_slaby(i, j, k) = data_cmplx_out1d(k + (i-1)*Nz + (j-1)*Nz*NxC)
+                end do 
+            end do 
+        end do
+
+        ! transpose y-slab to z-slab
+        call s_mpi_transpose_slabY2Z
+
+        ! 3D z-slab -> 1D y, x, z
+        do i = 1, NxC 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC) = data_cmplx_slabz(i, j, k)
+                end do 
+            end do 
+        end do
+
+        ! Y inv FFT 
+        call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
+
+        ! 1D y, x, z -> 1D x, y, z 
+        do i = 1, NxC 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_cmplx_out1d(i + (j-1)*NxC + (k-1)*NxC*Ny) = data_cmplx_out1dy(j + (i-1)*Ny + (k-1)*Ny*NxC)
+                end do 
+            end do 
+        end do
+
+        ! X inv FFT
+        call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
+
+        ! 1D x, y, z -> 3D z-slab
+        do i = 1, Nx 
+            do j = 1, Ny 
+                do k = 1, Nzloc
+                    data_real_3D_slabz(i, j, k) = data_real_in1d(i + (j-1)*Nx + (k-1)*Nx*Ny)
+                end do 
+            end do 
+        end do
+
+    end subroutine s_mpi_FFT_bwd
+ 
     !>  The purpose of this subroutine is to apply a Fourier low-
         !!      pass filter to the flow variables in the azimuthal direction
         !!      to remove the high-frequency content. This alleviates the
@@ -906,23 +1048,27 @@ contains
     subroutine s_finalize_fftw_explicit_filter_module
         @:DEALLOCATE(fluid_indicator_function_I%sf)
 
+        @:DEALLOCATE(data_real_in1d, data_cmplx_out1d, data_cmplx_out1dy)
+        @:DEALLOCATE(cmplx_kernelG1d, real_kernelG_in)
+        @:DEALLOCATE(data_real_3D_slabz, data_cmplx_slabz, data_cmplx_slaby)
+
 #if defined(MFC_OpenACC)
-        @:DEALLOCATE(real_data_gpu, complex_data_gpu, real_kernelG_gpu, complex_kernelG_gpu)
-        @:DEALLOCATE(complex_data_gpu_mpi, complex_kernelG_gpu_mpi, complex_y_gpu, complex_x_gpu)
+        @:DEALLOCATE(real_data_gpu, complex_data_gpu, complex_kernelG_gpu)
 
         ierr = cufftDestroy(forward_plan_gpu)
         ierr = cufftDestroy(backward_plan_gpu)
 
         ierr = cufftDestroy(forward_plan_kernelG_gpu)
 #else
-        call fftw_free(p_real)
-        call fftw_free(p_complex)
-        call fftw_free(p_kernelG_real)
-        call fftw_free(p_kernelG_complex)
-
-        call fftw_destroy_plan(plan_forward)
-        call fftw_destroy_plan(plan_backward)
-        call fftw_destroy_plan(plan_kernelG_forward)
+        call fftw_destroy_plan(plan_x_r2c_fwd)
+        call fftw_destroy_plan(plan_x_c2r_bwd)
+        call fftw_destroy_plan(plan_y_c2c_fwd) 
+        call fftw_destroy_plan(plan_y_c2c_bwd) 
+        call fftw_destroy_plan(plan_z_c2c_fwd) 
+        call fftw_destroy_plan(plan_z_c2c_bwd) 
+        call fftw_destroy_plan(plan_x_r2c_kernelG)
+        call fftw_destroy_plan(plan_y_c2c_kernelG)
+        call fftw_destroy_plan(plan_z_c2c_kernelG)
 #endif
 
     end subroutine s_finalize_fftw_explicit_filter_module
