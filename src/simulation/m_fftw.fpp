@@ -78,31 +78,22 @@ module m_fftw
     integer :: ierr
 
     ! ============ NEW ADDITIONS ============
+
     ! fluid indicator function (1 = fluid, 0 = otherwise)
     type(scalar_field), public :: fluid_indicator_function_I
+
     !$acc declare create(fluid_indicator_function_I)
 
 #if defined(MFC_OpenACC)
-    real(dp), allocatable, target :: real_data_gpu(:, :, :)
-    complex(dp), allocatable, target :: complex_data_gpu(:, :, :)
-
-    complex(dp), allocatable, target :: complex_kernelG_gpu(:, :, :)
-
-    integer :: forward_plan_gpu
-    integer :: backward_plan_gpu
-
-    integer :: forward_plan_kernelG_gpu
-
-    integer :: plan_y_gpu 
-    integer :: plan_x_gpu
-
-    !$acc declare create(real_data_gpu, complex_data_gpu, real_kernelG_in, complex_kernelG_gpu)
-#endif
+    ! GPU plans
+    integer :: plan_x_fwd_gpu, plan_x_bwd_gpu, plan_y_gpu, plan_z_gpu
+#else
     ! CPU plans
     type(c_ptr) :: plan_x_r2c_fwd, plan_x_c2r_bwd
     type(c_ptr) :: plan_y_c2c_fwd, plan_y_c2c_bwd 
     type(c_ptr) :: plan_z_c2c_fwd, plan_z_c2c_bwd
     type(c_ptr) :: plan_x_r2c_kernelG, plan_y_c2c_kernelG, plan_z_c2c_kernelG
+#endif
 
     ! domain size information
     integer :: Nx, Ny, Nz, NxC, Nyloc, Nzloc
@@ -119,12 +110,13 @@ module m_fftw
     real(c_double), allocatable :: data_real_3D_slabz(:, :, :)
 
     ! filtering kernel in physical space
-    real(c_double), allocatable, target :: real_kernelG_in(:, :, :)
+    real(c_double), allocatable :: real_kernelG_in(:, :, :)
 
     ! FFT of filtering kernel
     complex(c_double_complex), allocatable :: cmplx_kernelG1d(:)
 
-    integer :: size_n(1), inembed(1), onembed(1)
+    !$acc declare create(Nx, Ny, Nz, NxC, Nyloc, Nzloc)
+    !$acc declare create(data_real_in1d, data_cmplx_out1d, data_cmplx_out1dy, data_cmplx_slabz, data_cmplx_slaby, data_real_3D_slabz, real_kernelG_in, cmplx_kernelG1d)
 
 contains
 
@@ -184,30 +176,15 @@ contains
 
     end subroutine s_initialize_fftw_module
 
-    ! create fftw plan to be used for explicit filtering of data -> volume filtering
+    !< create fft plans to be used for explicit filtering of data 
     subroutine s_initialize_fftw_explicit_filter_module
-        integer :: fft_rank
-        integer :: batch, istride, idist, ostride, odist
+        integer :: size_n(1), inembed(1), onembed(1)
 
         print *, 'FFTW SETUP...'
 
         @:ALLOCATE(fluid_indicator_function_I%sf(0:m, 0:n, 0:p))
         @:ACC_SETUP_SFs(fluid_indicator_function_I)
 
-#if defined(MFC_OpenACC)
-        ! gpu data setup
-        @:ALLOCATE(real_data_gpu(m+1, n+1, p+1))
-        @:ALLOCATE(complex_data_gpu((m+1)/2+1, n+1, p+1))
-
-        ! gpu kernel arrays
-        @:ALLOCATE(complex_kernelG_gpu((m+1)/2+1, n+1, p+1))
-
-        ! gpu plan creation
-        ierr = cufftPlan3d(forward_plan_gpu, p+1, n+1, m+1, CUFFT_D2Z)
-        ierr = cufftPlan3d(backward_plan_gpu, p+1, n+1, m+1, CUFFT_Z2D)
-
-        ierr = cufftPlan3d(forward_plan_kernelG_gpu, p+1, n+1, m+1, CUFFT_D2Z)            
-#endif
         !< global sizes 
         Nx = m_glb + 1
         Ny = n_glb + 1
@@ -220,6 +197,8 @@ contains
         Nyloc = Ny / num_procs
         Nzloc = p + 1
 
+        !$acc update device(Nx, Ny, Nz, NxC, Nyloc, Nzloc)
+
         @:ALLOCATE(data_real_in1d(Nx*Ny*Nzloc))
         @:ALLOCATE(data_cmplx_out1d(NxC*Ny*Nz/num_procs))
         @:ALLOCATE(data_cmplx_out1dy(NxC*Ny*Nz/num_procs))
@@ -229,6 +208,29 @@ contains
         @:ALLOCATE(data_cmplx_slabz(NxC, Ny, Nzloc))
         @:ALLOCATE(data_cmplx_slaby(NxC, Nyloc, Nz))
 
+#if defined(MFC_OpenACC)
+        !< GPU FFT plans
+        !< X - plans
+        size_n(1) = Nx
+        inembed(1) = Nx
+        onembed(1) = NxC
+        ierr = cufftPlanMany(plan_x_fwd_gpu, 1, size_n, inembed, 1, Nx, onembed, 1, NxC, CUFFT_D2Z, Ny*Nzloc)
+        size_n(1) = Nx
+        inembed(1) = NxC
+        onembed(1) = Nx  
+        ierr = cufftPlanMany(plan_x_bwd_gpu, 1, size_n, inembed, 1, NxC, onembed, 1, Nx, CUFFT_Z2D, Ny*Nzloc)
+        !< Y - plans
+        size_n(1) = Ny
+        inembed(1) = Ny
+        onembed(1) = Ny
+        ierr = cufftPlanMany(plan_y_gpu, 1, size_n, inembed, 1, Ny, onembed, 1, Ny, CUFFT_Z2Z, NxC*Nzloc)
+        !< Z - plans
+        size_n(1) = Nz 
+        inembed(1) = Nz 
+        onembed(1) = Nz 
+        ierr = cufftPlanMany(plan_z_gpu, 1, size_n, inembed, 1, Nz, onembed, 1, Nz, CUFFT_Z2Z, NxC*Nyloc)
+#else
+        !< CPU FFT plans
         !< X - direction plans
         size_n(1) = Nx
         inembed(1) = Nx
@@ -293,6 +295,7 @@ contains
                                                 cmplx_kernelG1d, inembed, 1, Nz, & 
                                                 cmplx_kernelG1d, onembed, 1, Nz, & 
                                                 FFTW_FORWARD, FFTW_MEASURE)
+#endif
     end subroutine s_initialize_fftw_explicit_filter_module
 
     !< initialize the gaussian filtering kernel in real space and then compute its DFT
@@ -332,42 +335,19 @@ contains
 
         call s_mpi_allreduce_sum(G_norm_int, G_norm_int_glb) 
 
-        ! normalize the gaussian kernel
+        ! FFT of kernel
+        ! normalize kernel
         !$acc parallel loop collapse(3) gang vector default(present) copyin(G_norm_int_glb)
-        do i = 1, m+1 
-            do j = 1, n+1 
-                do k = 1, p+1
-                    real_kernelG_in(i, j, k) = real_kernelG_in(i, j, k) / G_norm_int_glb
-                end do 
-            end do 
-        end do
-
-
-#if defined(MFC_OpenACC) 
-        ! perform fourier transform on gaussian kernel
-        ierr = cufftExecD2Z(forward_plan_kernelG_gpu, real_kernelG_in, complex_kernelG_gpu)
-
-        ! normalize transformed kernel (divide by Nx*Ny*Nz)
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1
-                do k = 1, p+1
-                    complex_kernelG_gpu(i, j, k) = complex_kernelG_gpu(i, j, k) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
-                end do 
-            end do 
-        end do
-#endif
-
-        ! FFT filtering kernel
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc
-                    data_real_3D_slabz(i, j, k) = real_kernelG_in(i, j, k)
+                    data_real_3D_slabz(i, j, k) = real_kernelG_in(i, j, k) / G_norm_int_glb
                 end do 
             end do 
         end do 
 
         ! 3D z-slab -> 1D x, y, z
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -377,9 +357,14 @@ contains
         end do
 
         ! X FFT
+#if defined(MFC_OpenACC)
+        ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, cmplx_kernelG1d)
+#else
         call fftw_execute_dft_r2c(plan_x_r2c_kernelG, data_real_in1d, cmplx_kernelG1d)
+#endif
 
         ! 1D x, y, z -> 1D y, x, z (CMPLX)
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -389,9 +374,14 @@ contains
         end do
 
         ! Y FFT 
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
+#else
         call fftw_execute_dft(plan_y_c2c_kernelG, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
 
         ! 1D y, x, z -> 3D z-slab
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -404,6 +394,7 @@ contains
         call s_mpi_transpose_slabZ2Y 
 
         ! 3D y-slab -> 1D z, x, y
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz
@@ -413,9 +404,14 @@ contains
         end do
 
         ! Z FFT
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_z_gpu, cmplx_kernelG1d, cmplx_kernelG1d, CUFFT_FORWARD)
+#else
         call fftw_execute_dft(plan_z_c2c_kernelG, cmplx_kernelG1d, cmplx_kernelG1d)
+#endif
 
         ! normalize FFT 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz
@@ -423,8 +419,8 @@ contains
                 end do 
             end do 
         end do
-        ! return cmplx_kernelG1d: 1D z, x, y
 
+        ! return cmplx_kernelG1d: 1D z, x, y
     end subroutine s_initialize_filtering_kernel
 
     !< initialize the fluid indicator function and compute its filtered counterpart
@@ -448,39 +444,7 @@ contains
         end do
 
         ! filter fluid indicator function -> stored in q_cons_vf(advxb)
-#if defined(MFC_OpenACC)
         !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 0, m 
-            do j = 0, n 
-                do k = 0, p
-                    real_data_gpu(i+1, j+1, k+1) = fluid_indicator_function_I%sf(i, j, k)
-                end do 
-            end do 
-        end do 
-
-        ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1 
-                do k = 1, p+1
-                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                end do 
-            end do 
-        end do
-
-        ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 0, m 
-            do j = 0, n 
-                do k = 0, p 
-                    filtered_fluid_indicator_function%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp))
-                end do
-            end do
-        end do
-#endif
-
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc 
@@ -488,7 +452,10 @@ contains
                 end do 
             end do 
         end do 
+
         call s_mpi_FFT_fwd 
+
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz
@@ -496,7 +463,10 @@ contains
                 end do
             end do 
         end do
+
         call s_mpi_FFT_bwd
+
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -530,62 +500,8 @@ contains
 
         integer :: i, j, k
 
-#if defined(MFC_OpenACC)
         if (fluid_quantity) then 
             !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        real_data_gpu(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * fluid_indicator_function_I%sf(i, j, k)
-                    end do
-                end do
-            end do
-        else 
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        real_data_gpu(i+1, j+1, k+1) = q_temp_in%sf(i, j, k) * (1.0_dp - fluid_indicator_function_I%sf(i, j, k))
-                    end do
-                end do
-            end do
-        end if
-            
-        ierr = cufftExecD2Z(forward_plan_gpu, real_data_gpu, complex_data_gpu)
-
-        !$acc parallel loop collapse(3) gang vector default(present)
-        do i = 1, (m+1)/2+1
-            do j = 1, n+1
-                do k = 1, p+1
-                    complex_data_gpu(i, j, k) = complex_data_gpu(i, j, k) * complex_kernelG_gpu(i, j, k)
-                end do
-            end do
-        end do
-
-        ierr = cufftExecZ2D(backward_plan_gpu, complex_data_gpu, real_data_gpu)
-        
-        if (present(q_temp_out)) then
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        q_temp_out%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
-                    end do
-                end do
-            end do
-        else 
-            !$acc parallel loop collapse(3) gang vector default(present)
-            do i = 0, m 
-                do j = 0, n 
-                    do k = 0, p 
-                        q_temp_in%sf(i, j, k) = real_data_gpu(i+1, j+1, k+1) / (real(m+1, dp)*real(n+1, dp)*real(p+1, dp) * filtered_fluid_indicator_function%sf(i, j, k))
-                    end do
-                end do
-            end do
-        end if 
-#endif
-
-        if (fluid_quantity) then 
             do i = 0, m 
                 do j = 0, n 
                     do k = 0, p 
@@ -594,6 +510,7 @@ contains
                 end do 
             end do
         else 
+            !$acc parallel loop collapse(3) gang vector default(present)
             do i = 0, m 
                 do j = 0, n 
                     do k = 0, p 
@@ -605,6 +522,7 @@ contains
 
         call s_mpi_FFT_fwd 
 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz 
@@ -616,6 +534,7 @@ contains
         call s_mpi_FFT_bwd
 
         if (present(q_temp_out)) then 
+            !$acc parallel loop collapse(3) gang vector default(present)
             do i = 0, m
                 do j = 0, n
                     do k = 0, p
@@ -624,6 +543,7 @@ contains
                 end do 
             end do
         else 
+            !$acc parallel loop collapse(3) gang vector default(present)
             do i = 0, m
                 do j = 0, n 
                     do k = 0, p 
@@ -670,16 +590,17 @@ contains
     subroutine s_mpi_transpose_slabZ2Y
         complex(c_double_complex), allocatable :: sendbuf(:), recvbuf(:)
         integer :: dest_rank, src_rank
-        integer :: i, j, k, idx
+        integer :: i, j, k
 
         allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
         allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
 
+        !$acc parallel loop gang vector default(present) copy(sendbuf) private(dest_rank)
         do dest_rank = 0, num_procs-1
+            !$acc loop collapse(3) gang vector default(present) 
             do k = 1, Nzloc 
                 do j = dest_rank*Nyloc+1, (dest_rank+1)*Nyloc
                     do i = 1, NxC
-                        idx = idx + 1
                         sendbuf(i + (j-(dest_rank*Nyloc+1))*NxC + (k-1)*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slabz(i, j, k)
                     end do 
                 end do
@@ -689,7 +610,9 @@ contains
         call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
                           recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 
+        !$acc parallel loop gang vector default(present) copy(recvbuf) private(src_rank)
         do src_rank = 0, num_procs-1
+            !$acc loop collapse(3) gang vector default(present) 
             do k = src_rank*Nzloc+1, (src_rank+1)*Nzloc
                 do j = 1, Nyloc
                     do i = 1, NxC
@@ -711,7 +634,9 @@ contains
         allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
         allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
 
+        !$acc parallel loop gang vector default(present) copy(sendbuf) private(dest_rank)
         do dest_rank = 0, num_procs-1
+            !$acc parallel loop collapse(3) gang vector default(present) 
             do k = dest_rank*Nzloc+1, (dest_rank+1)*Nzloc
                 do j = 1, Nyloc 
                     do i = 1, NxC 
@@ -724,7 +649,9 @@ contains
         call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
                           recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 
+        !$acc parallel loop gang vector default(present) copy(recvbuf) private(src_rank)
         do src_rank = 0, num_procs-1
+            !$acc parallel loop collapse(3) gang vector default(present)
             do k = 1, Nzloc
                 do j = src_rank*Nyloc+1, (src_rank+1)*Nyloc
                     do i = 1, NxC 
@@ -742,6 +669,7 @@ contains
         integer :: i, j, k
 
         ! 3D z-slab -> 1D x, y, z
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -751,9 +679,14 @@ contains
         end do
 
         ! X FFT
+#if defined(MFC_OpenACC)
+        ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, data_cmplx_out1d)
+#else
         call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
+#endif
 
         ! 1D x, y, z -> 1D y, x, z (CMPLX)
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -763,9 +696,14 @@ contains
         end do
 
         ! Y FFT 
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
+#else
         call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif 
 
         ! 1D y, x, z -> 3D z-slab
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -778,6 +716,7 @@ contains
         call s_mpi_transpose_slabZ2Y 
 
         ! 3D y-slab -> 1D z, x, y
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz
@@ -787,7 +726,11 @@ contains
         end do
 
         ! Z FFT
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_FORWARD)
+#else
         call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
 
         ! return data_cmplx_out1d: 1D z, x, y
     end subroutine s_mpi_FFT_fwd
@@ -797,9 +740,14 @@ contains
         integer :: i, j, k
 
         ! Z inv FFT 
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_INVERSE)
+#else
         call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
 
         ! 1D z, x, y -> 3D y-slab
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Nyloc 
                 do k = 1, Nz 
@@ -812,6 +760,7 @@ contains
         call s_mpi_transpose_slabY2Z
 
         ! 3D z-slab -> 1D y, x, z
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -821,9 +770,14 @@ contains
         end do
 
         ! Y inv FFT 
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_INVERSE)
+#else
         call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
 
         ! 1D y, x, z -> 1D x, y, z 
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, NxC 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -833,9 +787,14 @@ contains
         end do
 
         ! X inv FFT
+#if defined(MFC_OpenACC)
+        ierr = cufftExecZ2D(plan_x_bwd_gpu, data_cmplx_out1d, data_real_in1d)
+#else
         call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
+#endif
 
         ! 1D x, y, z -> 3D z-slab
+        !$acc parallel loop collapse(3) gang vector default(present)
         do i = 1, Nx 
             do j = 1, Ny 
                 do k = 1, Nzloc
@@ -1053,12 +1012,10 @@ contains
         @:DEALLOCATE(data_real_3D_slabz, data_cmplx_slabz, data_cmplx_slaby)
 
 #if defined(MFC_OpenACC)
-        @:DEALLOCATE(real_data_gpu, complex_data_gpu, complex_kernelG_gpu)
-
-        ierr = cufftDestroy(forward_plan_gpu)
-        ierr = cufftDestroy(backward_plan_gpu)
-
-        ierr = cufftDestroy(forward_plan_kernelG_gpu)
+        ierr = cufftDestroy(plan_x_fwd_gpu)
+        ierr = cufftDestroy(plan_x_bwd_gpu) 
+        ierr = cufftDestroy(plan_y_gpu)
+        ierr = cufftDestroy(plan_z_gpu)
 #else
         call fftw_destroy_plan(plan_x_r2c_fwd)
         call fftw_destroy_plan(plan_x_c2r_bwd)
