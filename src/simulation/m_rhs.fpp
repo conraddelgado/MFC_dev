@@ -1006,22 +1006,21 @@ contains
 
             ! drag calculation loop, x-dir
             if (compute_CD_vi .or. fourier_transform_filtering) then
-                !$acc parallel loop collapse(4) gang vector default(present)
-                do l = momxb, momxe
-                    do i = 0, m
-                        do j = 0, n 
-                            do k = 0, p
-                                rhs_rhouu(l)%sf(i, j, k) = 1._wp/dx(i) * &
-                                                        (flux_n(1)%vf(l)%sf(i - 1, j, k) &
-                                                            - q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf%vf(l)%sf(i - 1, j, k)/q_cons_vf%vf(1)%sf(i - 1, j, k) &
-                                                            - (flux_n(1)%vf(l)%sf(i, j, k) & 
-                                                            - q_cons_vf%vf(2)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))
-                                                            !0.5_wp/dx(i) * (q_cons_vf%vf(2)%sf(i - 1, j, k)*q_cons_vf)
- 
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe
+                                rhs_rhouu(l)%sf(i, j, k) = 1._wp/dx(i) * & 
+                                                          (flux_n(1)%vf(l)%sf(i-1, j, k) - & 
+                                                           flux_n(1)%vf(l)%sf(i, j, k)) - 0.5_wp/dx(i) * & 
+                                                          (q_cons_vf%vf(2)%sf(i+1, j, k)*q_cons_vf%vf(l)%sf(i+1, j, k)/q_cons_vf%vf(1)%sf(i+1, j, k) - & 
+                                                           q_cons_vf%vf(2)%sf(i-1, j, k)*q_cons_vf%vf(l)%sf(i-1, j, k)/q_cons_vf%vf(1)%sf(i-1, j, k))
                             end do 
-                        end do
-                    end do
-                end do
+                        end do 
+                    end do 
+                end do 
             end if
 
             if (model_eqns == 3) then
@@ -1136,18 +1135,19 @@ contains
 
             ! drag calculation loop, y-dir
             if (compute_CD_vi .or. fourier_transform_filtering) then
-                !$acc parallel loop collapse(4) gang vector default(present)
-                do l = momxb, momxe
-                    do i = 0, m
-                        do j = 0, n 
-                            do k = 0, p
-                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dy(j) * &
-                                                        (flux_n(2)%vf(l)%sf(i, j - 1, k) &
-                                                            - q_cons_vf%vf(3)%sf(i , j - 1, k)*q_cons_vf%vf(l)%sf(i , j - 1, k)/q_cons_vf%vf(1)%sf(i , j - 1, k) &
-                                                            - (flux_n(2)%vf(l)%sf(i, j, k) & 
-                                                            - q_cons_vf%vf(3)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))                   
-                            end do 
-                        end do
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p 
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe 
+                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dy(j) * & 
+                                                          (flux_n(2)%vf(l)%sf(i, j-1, k) - & 
+                                                           flux_n(2)%vf(l)%sf(i, j, k)) - 0.5_wp/dy(j) * & 
+                                                          (q_cons_vf%vf(3)%sf(i, j+1, k)*q_cons_vf%vf(l)%sf(i, j+1, k)/q_cons_vf%vf(1)%sf(i, j+1, k) - & 
+                                                           q_cons_vf%vf(3)%sf(i, j-1, k)*q_cons_vf%vf(l)%sf(i, j-1, k)/q_cons_vf%vf(1)%sf(i, j-1, k))
+                            end do  
+                        end do 
                     end do
                 end do
             end if
@@ -1360,20 +1360,21 @@ contains
 
             ! drag calculation loop, z-dir
             if (compute_CD_vi .or. fourier_transform_filtering) then
-                !$acc parallel loop collapse(4) gang vector default(present)
-                do l = momxb, momxe
-                    do i = 0, m
-                        do j = 0, n 
-                            do k = 0, p
-                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dz(k) * &
-                                                        (flux_n(3)%vf(l)%sf(i, j, k - 1) &
-                                                            - q_cons_vf%vf(4)%sf(i , j, k - 1)*q_cons_vf%vf(l)%sf(i , j, k - 1)/q_cons_vf%vf(1)%sf(i , j, k - 1) &
-                                                            - (flux_n(3)%vf(l)%sf(i, j, k) & 
-                                                            - q_cons_vf%vf(4)%sf(i, j, k)*q_cons_vf%vf(l)%sf(i, j, k)/q_cons_vf%vf(1)%sf(i, j, k)))     
-                            end do 
-                        end do
-                    end do
-                end do
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p 
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe 
+                                rhs_rhouu(l)%sf(i, j, k) = rhs_rhouu(l)%sf(i, j, k) + 1._wp/dz(k) * & 
+                                                          (flux_n(3)%vf(l)%sf(i, j, k-1) - & 
+                                                           flux_n(3)%vf(l)%sf(i, j, k)) - 0.5_wp/dz(k) * & 
+                                                          (q_cons_vf%vf(4)%sf(i, j, k+1)*q_cons_vf%vf(l)%sf(i, j, k+1)/q_cons_vf%vf(1)%sf(i, j, k+1) - & 
+                                                           q_cons_vf%vf(4)%sf(i, j, k-1)*q_cons_vf%vf(l)%sf(i, j, k-1)/q_cons_vf%vf(1)%sf(i, j, k-1))
+                            end do  
+                        end do 
+                    end do 
+                end do 
             end if
 
             if (model_eqns == 3) then
@@ -1599,6 +1600,23 @@ contains
                 end do
             end do
 
+            ! particle momentum exchange, viscous stress tensor
+            if (compute_CD_vi .or. fourier_transform_filtering) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p 
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe
+                                rhs_vf(l)%sf(i, j, k) = rhs_vf(l)%sf(i, j, k) + 1._wp/dx(i) * & 
+                                                       (flux_src_n(l)%sf(i-1, j, k) - & 
+                                                        flux_src_n(l)%sf(i, j, k))
+                            end do 
+                        end do 
+                    end do 
+                end do
+            end if
+
         elseif (idir == 2) then ! y-direction
 
             if (surface_tension) then
@@ -1677,6 +1695,23 @@ contains
                                      - flux_src_n(i)%sf(j, k, l))
                             end do
                         end do
+                    end do
+                end do
+            end if
+
+            ! particle momentum exchange
+            if (compute_CD_vi .or. fourier_transform_filtering) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p 
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe
+                                rhs_vf(l)%sf(i, j, k) = rhs_vf(l)%sf(i, j, k) + 1._wp/dy(j) * & 
+                                                       (flux_src_n(l)%sf(i, j-1, k) - & 
+                                                        flux_src_n(l)%sf(i, j, k))
+                            end do 
+                        end do 
                     end do
                 end do
             end if
@@ -1765,6 +1800,22 @@ contains
                     end do
                 end do
             end do
+
+            if (compute_CD_vi .or. fourier_transform_filtering) then
+                !$acc parallel loop collapse(3) gang vector default(present)
+                do k = 0, p 
+                    do j = 0, n 
+                        do i = 0, m 
+                            !$acc loop seq
+                            do l = momxb, momxe 
+                                rhs_vf(l)%sf(i, j, k) = rhs_vf(l)%sf(i, j, k) + 1._wp/dz(k) * & 
+                                                       (flux_src_n(l)%sf(i, j, k-1) - & 
+                                                        flux_src_n(l)%sf(i, j, k))
+                            end do 
+                        end do 
+                    end do 
+                end do 
+            end if 
 
             if (grid_geometry == 3) then
                 !$acc parallel loop collapse(3) gang vector default(present)

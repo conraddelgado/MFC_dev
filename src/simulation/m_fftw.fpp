@@ -95,7 +95,7 @@ module m_fftw
     type(c_ptr) :: plan_x_r2c_kernelG, plan_y_c2c_kernelG, plan_z_c2c_kernelG
 #endif
 
-    ! domain size information
+    ! domain size information (global, complex, local)
     integer :: Nx, Ny, Nz, NxC, Nyloc, Nzloc
 
     ! 1D real and complex vectors for FFT routines
@@ -106,7 +106,7 @@ module m_fftw
     ! 3D arrays for slab transposes
     complex(c_double_complex), allocatable :: data_cmplx_slabz(:, :, :), data_cmplx_slaby(:, :, :)
 
-    ! input array for FFT
+    ! input/output array for FFT routine
     real(c_double), allocatable :: data_real_3D_slabz(:, :, :)
 
     ! filtering kernel in physical space
@@ -595,13 +595,12 @@ contains
         allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
         allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
 
-        !$acc parallel loop gang vector default(present) copy(sendbuf) private(dest_rank)
+        !$acc parallel loop collapse(4) gang vector default(present) copy(sendbuf)
         do dest_rank = 0, num_procs-1
-            !$acc loop collapse(3) gang vector default(present) 
             do k = 1, Nzloc 
-                do j = dest_rank*Nyloc+1, (dest_rank+1)*Nyloc
+                do j = 1, Nyloc
                     do i = 1, NxC
-                        sendbuf(i + (j-(dest_rank*Nyloc+1))*NxC + (k-1)*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slabz(i, j, k)
+                        sendbuf(i + (j-1)*NxC + (k-1)*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slabz(i, j+dest_rank*Nyloc, k)
                     end do 
                 end do
             end do
@@ -610,13 +609,12 @@ contains
         call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
                           recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 
-        !$acc parallel loop gang vector default(present) copy(recvbuf) private(src_rank)
+        !$acc parallel loop collapse(4) gang vector default(present) copy(recvbuf)
         do src_rank = 0, num_procs-1
-            !$acc loop collapse(3) gang vector default(present) 
-            do k = src_rank*Nzloc+1, (src_rank+1)*Nzloc
+            do k = 1, Nzloc 
                 do j = 1, Nyloc
                     do i = 1, NxC
-                        data_cmplx_slaby(i, j, k) = recvbuf(i + (j-1)*NxC + (k-(src_rank*Nzloc+1))*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
+                        data_cmplx_slaby(i, j, k+src_rank*Nzloc) = recvbuf(i + (j-1)*NxC + (k-1)*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
                     end do 
                 end do
             end do 
@@ -634,13 +632,12 @@ contains
         allocate(sendbuf(NxC*Nyloc*Nzloc*num_procs))
         allocate(recvbuf(NxC*Nyloc*Nzloc*num_procs))
 
-        !$acc parallel loop gang vector default(present) copy(sendbuf) private(dest_rank)
+        !$acc parallel loop collapse(4) gang vector default(present) copy(sendbuf)
         do dest_rank = 0, num_procs-1
-            !$acc parallel loop collapse(3) gang vector default(present) 
-            do k = dest_rank*Nzloc+1, (dest_rank+1)*Nzloc
+            do k = 1, Nzloc 
                 do j = 1, Nyloc 
                     do i = 1, NxC 
-                        sendbuf(i + (j-1)*NxC + (k-(dest_rank*Nzloc+1))*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slaby(i, j, k)
+                        sendbuf(i + (j-1)*NxC + (k-1)*NxC*Nyloc + dest_rank*NxC*Nyloc*Nzloc) = data_cmplx_slaby(i, j, k+dest_rank*Nzloc)
                     end do 
                 end do 
             end do 
@@ -649,13 +646,12 @@ contains
         call MPI_Alltoall(sendbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, & 
                           recvbuf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 
-        !$acc parallel loop gang vector default(present) copy(recvbuf) private(src_rank)
+        !$acc parallel loop collapse(4) gang vector default(present) copy(recvbuf) 
         do src_rank = 0, num_procs-1
-            !$acc parallel loop collapse(3) gang vector default(present)
             do k = 1, Nzloc
-                do j = src_rank*Nyloc+1, (src_rank+1)*Nyloc
+                do j = 1, Nyloc 
                     do i = 1, NxC 
-                        data_cmplx_slabz(i, j, k) = recvbuf(i + (j-(src_rank*Nyloc+1))*NxC + (k-1)*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
+                        data_cmplx_slabz(i, j+src_rank*Nyloc, k) = recvbuf(i + (j-1)*NxC + (k-1)*NxC*Nyloc + src_rank*NxC*Nyloc*Nzloc)
                     end do 
                 end do
             end do 

@@ -137,7 +137,7 @@ case_dict = {
     # new case additions
     "periodic_forcing": "T",
     "periodic_ibs": "T",
-    "compute_CD_vi": "T",
+    "compute_CD_vi": "F",
     "compute_CD_si": "F",
     "fourier_transform_filtering": "T",
 
